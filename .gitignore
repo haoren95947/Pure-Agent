@@ -5,3 +5,5 @@
 /dist
 /dist-next
 *.tmp
+__pycache__/
+*.pyc
