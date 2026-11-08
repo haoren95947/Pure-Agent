@@ -1,0 +1,29 @@
+[package]
+name = "pure-subagents"
+# Explicit: the old rpi workspace version; must not drift to the root's 0.21.0.
+version = "0.1.15"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Bounded subagent runner for pure Rust agents"
+readme = "README.md"
+keywords = ["pure", "subagents", "delegation", "plugin"]
+categories = ["development-tools"]
+
+[package.metadata.pure.prebuilt]
+supported-targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rpi-plugin-sdk = { workspace = true }
+serde_json = { workspace = true }

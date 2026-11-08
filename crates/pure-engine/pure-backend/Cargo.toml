@@ -1,0 +1,18 @@
+[package]
+name = "pure-backend"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Pure Agent ACP backend and kernel host"
+
+[[bin]]
+name = "pure-backend"
+path = "src/main.rs"
+
+[dependencies]
+pure-acp = { path = "../pure-acp" }
+# The pure host is linked into this binary: one executable serves both the ACP
+# backend (`pure-backend rpc`) and the per-session host (`--mode rpc`).
+pure-cli = { path = "../pure-cli" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-std", "sync"] }
+serde_json = "1"

@@ -1,0 +1,298 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.2.14](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.13...rpi-acp-v0.2.14) - 2026-11-07
+
+### Other
+
+- updated the following local packages: rpi-extcore
+
+## [0.2.13](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.12...rpi-acp-v0.2.13) - 2026-11-06
+
+### Fixed
+
+- *(release)* publish musl builds for non-voice extensions ([#222](https://github.com/pi-rust/rpi-package/pull/222))
+
+## [0.2.12](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.11...rpi-acp-v0.2.12) - 2026-11-06
+
+### Other
+
+- honor per-crate musl support matrix ([#215](https://github.com/pi-rust/rpi-package/pull/215))
+
+## [0.2.11](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.10...rpi-acp-v0.2.11) - 2026-11-05
+
+### Fixed
+
+- *(acp)* sync inline image prompt limits
+- *(acp)* keep test-only response helper out of release builds
+
+## [0.2.10](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.9...rpi-acp-v0.2.10) - 2026-11-05
+
+### Fixed
+
+- *(extcore)* prove live children with native branch identity
+
+## [0.2.9](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.8...rpi-acp-v0.2.9) - 2026-11-04
+
+### Added
+
+- *(acp)* add optional live child subscriptions
+- *(adapters)* expose bounded Code Mode child queries and live feed
+
+### Fixed
+
+- *(acp)* bound live subscription shutdown
+
+## [0.2.8](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.7...rpi-acp-v0.2.8) - 2026-11-03
+
+### Other
+
+- updated the following local packages: rpi-extcore
+
+## [0.2.7](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.6...rpi-acp-v0.2.7) - 2026-11-02
+
+### Added
+
+- *(extcore)* own exact session resource lifecycle and recovery
+
+## [0.2.6](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.5...rpi-acp-v0.2.6) - 2026-11-01
+
+### Added
+
+- *(acp)* bridge native message IDs, inline images and client file IO
+- *(acp)* report native context usage at session and run boundaries
+- *(acp)* synchronize live native model and thinking configuration
+- *(acp)* discover saved native sessions with bounded pagination
+- *(acp)* bridge session-scoped Streamable HTTP MCP tools
+- *(acp)* bridge per-session stdio MCP tools through extcore
+
+### Fixed
+
+- *(acp)* preserve supplied native tool names across updates and replay
+
+### Other
+
+- *(acp)* match invalid workspace parameter errors
+- *(acp)* give native context probe the explicit session root
+- *(acp)* set explicit model-dependent native thinking choices
+- *(acp)* fence every cold listing lifecycle before Job disposal
+
+## [0.2.5](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.4...rpi-acp-v0.2.5) - 2026-10-31
+
+### Added
+
+- *(acp)* route compact through the shared native run lifecycle
+
+## [0.2.4](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.3...rpi-acp-v0.2.4) - 2026-10-31
+
+### Fixed
+
+- *(acp)* bound active-branch history replay preparation
+- *(acp)* preserve full resource URIs in prompt references
+
+### Other
+
+- Merge pull request #130 from pi-rust/codex/acp-stage1-bounded-history
+
+## [0.2.3](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.2...rpi-acp-v0.2.3) - 2026-10-30
+
+### Other
+
+- updated the following local packages: rpi-extcore
+
+## [0.2.2](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.1...rpi-acp-v0.2.2) - 2026-10-30
+
+### Fixed
+
+- *(rpc)* adapt server and shared projections to compact native deltas
+
+### Fixed
+
+- Cover compact native text/thinking updates with nonempty initial content and authoritative final suffixes, without duplicate ACP chunks. Shared reconciliation is provided by rpi-extcore; native prompt acceptance and settlement semantics are unchanged.
+
+## [0.2.1](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.2.0...rpi-acp-v0.2.1) - 2026-10-29
+
+### Added
+
+- *(acp)* harden protocol lifecycle and capability coverage
+
+### Other
+
+- Merge main into feature-1028 and preserve canonical durable recovery
+
+## [0.2.0](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.23...rpi-acp-v0.2.0) - 2026-10-29
+
+### Other
+
+- *(durable)* [**breaking**] require canonical filtered branch recovery ([#109](https://github.com/pi-rust/rpi-package/pull/109))
+
+## [0.1.23](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.22...rpi-acp-v0.1.23) - 2026-10-28
+
+### Other
+
+- use canonical durable events in ACP
+
+## [0.1.22](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.21...rpi-acp-v0.1.22) - 2026-10-28
+
+### Other
+
+- Merge pull request #99 from pi-rust/feature-1028
+- *(durable)* remove background polling
+
+## [0.1.21](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.20...rpi-acp-v0.1.21) - 2026-10-28
+
+### Other
+
+- *(transcript)* reduce session snapshot and branch polling cost
+
+## [0.1.20](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.19...rpi-acp-v0.1.20) - 2026-10-28
+
+### Added
+
+- consolidate durable state and publish commit updates ([#91](https://github.com/pi-rust/rpi-package/pull/91))
+
+## [0.1.19](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.18...rpi-acp-v0.1.19) - 2026-10-26
+
+### Other
+
+- updated the following local packages: rpi-extcore
+
+## [0.1.18](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.17...rpi-acp-v0.1.18) - 2026-10-26
+
+### Fixed
+
+- remove rpi-acp changelog conflict markers and an orchestrator -D warnings error ([#77](https://github.com/pi-rust/rpi-package/pull/77))
+
+## [0.1.17](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.16...rpi-acp-v0.1.17) - 2026-10-25
+
+### Added
+
+- *(durable)* add branch-backed durable runtime
+
+### Added
+
+- Add the optional ACP `session/durable` extension for branch-backed durable
+  state, run recovery and queue coordination; hosts without branch support
+  continue to serve ordinary ACP sessions.
+- Add the optional `session/durable_update` notification after durable state is
+  successfully persisted, including its revision and complete branch-backed
+  state snapshot.
+
+## [0.1.16](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.15...rpi-acp-v0.1.16) - 2026-10-25
+
+### Other
+
+- updated the following local packages: rpi-extcore
+
+## [0.1.15](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.14...rpi-acp-v0.1.15) - 2026-10-24
+
+### Other
+
+- extract shared extension core and HTTP adapter
+
+## [0.1.14](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.13...rpi-acp-v0.1.14) - 2026-10-23
+
+### Fixed
+
+- *(acp)* hide todo tool JSON from Zed cards
+- *(acp)* refresh Zed plan from todo updates
+
+### Other
+
+- Merge branch 'main' of github.com:pi-rust/rpi-package into feature/web-session-search
+- *(release)* bump workspace to 0.1.9
+
+## [0.1.13](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.12...rpi-acp-v0.1.13) - 2026-10-23
+
+### Fixed
+
+- *(acp)* publish todo cards and live Zed plan updates ([#62](https://github.com/pi-rust/rpi-package/pull/62))
+
+### Fixed
+
+- Hide the `todo` tool's structured arguments and result envelope from ACP tool-call cards, showing a concise action title instead of raw JSON.
+- Forward `todo` result snapshots as ACP plan updates so Zed's plan panel reflects pending, in-progress, and completed task states immediately.
+
+## [0.1.12](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.11...rpi-acp-v0.1.12) - 2026-10-22
+
+### Fixed
+
+- *(acp)* expose Zed model and provider switching
+
+### Fixed
+
+- Make Zed model configuration resilient across native RPC state shapes, group models by Provider, and retain model switching when thinking-level discovery is unavailable. Configuration failures are now logged instead of silently hiding the ACP options.
+
+## [0.1.11] - 2026-10-21
+
+### Added
+
+- Advertise ACP Session Config Options — a `model` and a `thought_level` selector — so clients (e.g. Zed) can offer a model picker, and implement `session/set_config_option` to switch model or thinking level without reconnecting.
+- Advertise `logout` and `session/delete`, implementing both: log out the default provider, and tear down a session's backend plus its persisted files.
+
+### Fixed
+
+- Forward the host's `--model` / `--provider` flags to the spawned `rpi --mode rpc` child so a Zed `args: ["--acp", "--model", "gateway/model"]` actually selects that model for the session.
+
+## [0.1.10] - 2026-10-21
+
+### Fixed
+
+- Align the ACP extension and standalone bridge with the current native RPC: send prompt `message`, read `success`/`data`, and wait for `agent_settled` after acceptance. Preserve final message snapshots and report rejected or failed runs correctly. Update RPC fixtures and add acceptance, state, and terminal-outcome regressions.
+- Stop a desynchronized backend when its event queue overflows instead of waiting indefinitely for a lost acceptance or returning an incomplete reply. Require reconnecting before reusing that backend.
+- Inherit the workspace's exact SDK version so published builds retain the tested plugin ABI.
+
+## [0.1.9](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.8...rpi-acp-v0.1.9) - 2026-10-17
+
+### Added
+
+- *(release)* add package-only backfill and prebuilt distribution
+- *(release)* add cross-platform prebuilt extension distribution
+
+### Fixed
+
+- harden subagent lifecycle and integrations
+
+### Other
+
+- Merge main into feature-1014 and preserve release compatibility
+- explain native Computer ACP setup and selective releases
+- *(acp)* fold core back into ACP and remove WebUI integration
+- Merge main into feature-1014 and preserve ACP integration checks
+- *(release)* use reusable release assets workflow
+
+## [0.1.8](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.7...rpi-acp-v0.1.8) - 2026-10-16
+
+### Added
+
+- Add `--bypass` to skip permission-gate approvals for ACP sessions and the standalone bridge.
+
+## [0.1.7](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.6...rpi-acp-v0.1.7) - 2026-10-15
+
+### Added
+
+- *(acp)* advertise ACP terminal auth and generate the registry entry ([#14](https://github.com/pi-rust/rpi-package/pull/14))
+
+## [0.1.6](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.5...rpi-acp-v0.1.6) - 2026-10-14
+
+### Other
+
+- *(acp)* consolidate ACP and use native Computer integration ([#12](https://github.com/pi-rust/rpi-package/pull/12))
+
+## [0.1.5](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.4...rpi-acp-v0.1.5) - 2026-10-14
+
+### Added
+
+- *(webui)* automatically connect Open WebUI to the current project ([#8](https://github.com/pi-rust/rpi-package/pull/8))
+
+## [0.1.4](https://github.com/pi-rust/rpi-package/compare/rpi-acp-v0.1.3...rpi-acp-v0.1.4) - 2026-10-14
+
+### Added
+
+- *(webui)* integrate Open WebUI and publish versioned extensions ([#4](https://github.com/pi-rust/rpi-package/pull/4))

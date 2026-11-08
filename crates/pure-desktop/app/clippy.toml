@@ -1,0 +1,4 @@
+# pure-desktop's own MSRV: newer than the CLI's, as its Cargo.toml
+# declares.
+msrv = "1.95"
+doc-valid-idents = ["DuckDuckGo", "SearXNG", ".."]

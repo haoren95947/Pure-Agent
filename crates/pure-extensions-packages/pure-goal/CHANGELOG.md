@@ -1,0 +1,95 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.2.5](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.2.4...rpi-goal-v0.2.5) - 2026-11-06
+
+### Fixed
+
+- *(release)* publish musl builds for non-voice extensions ([#222](https://github.com/pi-rust/rpi-package/pull/222))
+
+## [0.2.4](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.2.3...rpi-goal-v0.2.4) - 2026-11-06
+
+### Other
+
+- honor per-crate musl support matrix ([#215](https://github.com/pi-rust/rpi-package/pull/215))
+
+## [0.2.3](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.2.2...rpi-goal-v0.2.3) - 2026-11-05
+
+### Fixed
+
+- make strict warning builds pass
+
+## [0.2.2](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.2.1...rpi-goal-v0.2.2) - 2026-11-02
+
+### Fixed
+
+- *(goal)* bind runtime actions to callback owners across reloads
+
+## [0.2.1](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.2.0...rpi-goal-v0.2.1) - 2026-10-31
+
+### Fixed
+
+- *(tools)* clarify guidance and complete parameter schemas ([#135](https://github.com/pi-rust/rpi-package/pull/135))
+
+## [0.2.0](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.1.11...rpi-goal-v0.2.0) - 2026-10-29
+
+### Other
+
+- *(durable)* [**breaking**] require canonical filtered branch recovery ([#109](https://github.com/pi-rust/rpi-package/pull/109))
+
+## [0.1.11](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.1.10...rpi-goal-v0.1.11) - 2026-10-17
+
+### Added
+
+- *(release)* add package-only backfill and prebuilt distribution
+
+### Fixed
+
+- *(goal)* keep TUI responsive when starting work
+
+### Other
+
+- Merge main into feature-1014 and preserve release compatibility
+- Merge main into feature-1014 and preserve ACP integration checks
+- *(release)* use reusable release assets workflow
+
+## [0.1.10](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.1.9...rpi-goal-v0.1.10) - 2026-10-17
+
+### Fixed
+
+- *(goal)* keep TUI responsive when starting work ([#26](https://github.com/pi-rust/rpi-package/pull/26))
+
+## [0.1.9](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.1.8...rpi-goal-v0.1.9) - 2026-10-16
+
+### Added
+
+- *(rpi-goal)* say that starting a goal does not begin work
+
+### Fixed
+
+- *(goal)* retry failed notices at safe context boundaries
+- *(goal)* capture inherited subagent role before runs
+- *(rpi-goal)* don't count a subagent's turns against the parent's goal
+- *(rpi-goal)* inject the goal notice at a safe boundary, not inside a tool batch
+
+### Other
+
+- *(rpi-goal)* cover the boundary injection and the subagent budget in isolation
+
+## [0.1.8](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.1.7...rpi-goal-v0.1.8) - 2026-10-14
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.1.7](https://github.com/pi-rust/rpi-package/compare/rpi-goal-v0.1.6...rpi-goal-v0.1.7) - 2026-10-14
+
+### Added
+
+- *(webui)* integrate Open WebUI and publish versioned extensions ([#4](https://github.com/pi-rust/rpi-package/pull/4))

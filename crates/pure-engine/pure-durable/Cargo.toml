@@ -1,0 +1,16 @@
+[package]
+name = "pure-durable"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+readme = "README.md"
+description = "Backend-independent checkpoint and recovery primitives for the native pure host"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

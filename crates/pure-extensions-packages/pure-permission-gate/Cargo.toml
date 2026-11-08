@@ -1,0 +1,28 @@
+[package]
+name = "pure-permission-gate"
+version = "0.1.4"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Tool-call permission gate extension for pure — confirm dangerous bash/powershell/write/edit calls via the host UI dialog"
+readme = "README.md"
+keywords = ["pure", "permission", "tool-call", "extension", "approval"]
+
+[package.metadata.pure.prebuilt]
+supported-targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+globset = { workspace = true }
+rpi-plugin-sdk = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,424 @@
+//! Tool permission rules (`[permissions]`): allow / ask / deny.
+//!
+//! Built-in tools are allowed unless configured otherwise, which
+//! preserves the historical auto-approve behavior.
+//! A `[permissions.tools.<name>]` entry opts one tool into rules;
+//! within an entry the `deny` patterns are checked first, then the
+//! `allow` patterns, and the `default` action applies when neither
+//! matches. Patterns are globs matched against the tool's "command
+//! line": the `command` string for shell-style tools, otherwise the
+//! compact JSON encoding of the whole input.
+//!
+//! MCP tools (`<server>__<tool>`) are the exception to the allow
+//! default: a call to one without a `[permissions.tools.<name>]` entry
+//! resolves through `[permissions.mcp]`, where unlisted servers ask.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::config::config_error;
+
+/// One step on the permission ladder.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionAction {
+    /// Run the tool without prompting.
+    #[default]
+    Allow,
+    /// Ask the host for an interactive decision before running.
+    Ask,
+    /// Refuse the call outright.
+    Deny,
+}
+
+/// Rules for a single tool (`[permissions.tools.<name>]`).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolPermissionRules {
+    /// Action when neither `deny` nor `allow` matches. Defaults to
+    /// `allow` so an entry can add `deny` patterns without opting
+    /// the whole tool into prompts.
+    pub default: PermissionAction,
+    /// Glob patterns; a match runs the tool without prompting.
+    pub allow: Vec<String>,
+    /// Glob patterns; a match refuses the call.
+    pub deny: Vec<String>,
+}
+
+/// The `[permissions]` table.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PermissionsConfig {
+    /// Path confinement: route the built-in file tools through
+    /// escape-checked resolution so reads and writes stay under the
+    /// working directory. Defaults to `true`; set
+    /// `confine_paths = false` to restore the historical unconfined
+    /// resolution, which lets model-supplied paths escape the
+    /// workdir.
+    #[serde(default = "default_confine_paths")]
+    pub confine_paths: bool,
+    /// Per-tool rules, keyed by literal tool name (`shell`,
+    /// `write`, `github__create_issue`, ...). No glob keys in
+    /// v1: ordering overlapping patterns deterministically is not
+    /// worth the confusion yet.
+    pub tools: BTreeMap<String, ToolPermissionRules>,
+    /// Action for tools of an MCP server, keyed by server name, when
+    /// the tool has no `[permissions.tools.<name>]` entry. The key
+    /// `*` covers every server; an explicit server entry wins over
+    /// the wildcard. Servers matching neither ask.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub mcp: BTreeMap<String, PermissionAction>,
+}
+
+impl Default for PermissionsConfig {
+    fn default() -> Self {
+        Self {
+            confine_paths: default_confine_paths(),
+            tools: BTreeMap::new(),
+            mcp: BTreeMap::new(),
+        }
+    }
+}
+
+fn default_confine_paths() -> bool {
+    true
+}
+
+impl PermissionsConfig {
+    /// Whether the table carries no configuration at all: confinement
+    /// at its default (on) and no tool or MCP rules.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        self.confine_paths && self.tools.is_empty() && self.mcp.is_empty()
+    }
+
+    /// The action for a tool of MCP server `server` that has no
+    /// per-tool entry: the `[permissions.mcp]` entry for the server,
+    /// else the `*` wildcard, else `ask`.
+    #[must_use]
+    pub fn mcp_action(&self, server: &str) -> PermissionAction {
+        if let Some(action) = self.mcp.get(server) {
+            return *action;
+        }
+        self.mcp.get("*").copied().unwrap_or(PermissionAction::Ask)
+    }
+
+    /// Reject structurally broken configuration so `pure` refuses to
+    /// start on rules it would silently misapply: empty tool names
+    /// and server names, and empty or uncompilable glob patterns.
+    ///
+    /// # Errors
+    ///
+    /// A [`crate::error::Error`] describing the first problem found.
+    pub fn validate(&self) -> Result<(), crate::error::Error> {
+        if self.mcp.contains_key("") {
+            return Err(config_error(
+                "[permissions.mcp] keys must be non-empty server names".to_owned(),
+            ));
+        }
+        for (tool, rules) in &self.tools {
+            if tool.is_empty() {
+                return Err(config_error(
+                    "[permissions.tools] keys must be non-empty tool names".to_owned(),
+                ));
+            }
+            for pattern in rules.allow.iter().chain(&rules.deny) {
+                if pattern.is_empty() {
+                    return Err(config_error(format!(
+                        "[permissions.tools.{tool}] patterns must be non-empty"
+                    )));
+                }
+                if let Err(e) = globset::Glob::new(pattern) {
+                    return Err(config_error(format!(
+                        "[permissions.tools.{tool}] pattern `{pattern}` does not compile: {e}"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Evaluate the rules for `tool` against `subject` (see the
+    /// module docs for extraction). Tools without an entry are
+    /// allowed; otherwise `deny` wins over `allow`, and `default`
+    /// applies when neither list matches.
+    #[must_use]
+    pub fn check(&self, tool: &str, subject: &str) -> PermissionAction {
+        let Some(rules) = self.tools.get(tool) else {
+            return PermissionAction::Allow;
+        };
+        if matches_any(&rules.deny, subject) {
+            return PermissionAction::Deny;
+        }
+        if matches_any(&rules.allow, subject) {
+            return PermissionAction::Allow;
+        }
+        rules.default
+    }
+
+    /// The string glob patterns match against for one tool input:
+    /// the `command` field when the input carries one (shell-style
+    /// tools), otherwise the compact JSON encoding of the whole
+    /// input, with object keys sorted so the same input yields the
+    /// same subject however it was ordered.
+    #[must_use]
+    pub fn subject_for(input: &serde_json::Value) -> String {
+        match input.get("command").and_then(serde_json::Value::as_str) {
+            Some(command) => command.to_owned(),
+            None => canonical(input).to_string(),
+        }
+    }
+}
+
+/// Whether any pattern in `patterns` glob-matches `subject`.
+fn matches_any(patterns: &[String], subject: &str) -> bool {
+    patterns
+        .iter()
+        .any(|p| compiled_glob(p).is_some_and(|m| m.is_match(subject)))
+}
+
+/// `value` with every object's keys sorted, so its JSON text does not
+/// depend on the order it was built in.
+fn canonical(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            let mut pairs: Vec<_> = map.iter().collect();
+            pairs.sort_by(|a, b| a.0.cmp(b.0));
+            Value::Object(
+                pairs
+                    .into_iter()
+                    .map(|(key, value)| (key.clone(), canonical(value)))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+        value => value.clone(),
+    }
+}
+
+/// Process-wide compiled-glob memo. Patterns are few and static for
+/// the life of a process, so this turns every `check` compile into a
+/// hash lookup. Cleared wholesale past the cap, which only a
+/// pathological config churn could hit.
+fn compiled_glob(pattern: &str) -> Option<globset::GlobMatcher> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<globset::GlobMatcher>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if guard.len() > 1024 {
+        guard.clear();
+    }
+    if let Some(hit) = guard.get(pattern) {
+        return hit.clone();
+    }
+    let compiled = globset::Glob::new(pattern)
+        .ok()
+        .map(|g| g.compile_matcher());
+    guard.insert(pattern.to_owned(), compiled.clone());
+    compiled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rules(default: PermissionAction, allow: &[&str], deny: &[&str]) -> PermissionsConfig {
+        PermissionsConfig {
+            confine_paths: false,
+            mcp: BTreeMap::new(),
+            tools: [(
+                "shell".to_owned(),
+                ToolPermissionRules {
+                    default,
+                    allow: allow.iter().map(|s| (*s).to_owned()).collect(),
+                    deny: deny.iter().map(|s| (*s).to_owned()).collect(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    #[test]
+    fn missing_tool_entry_allows() {
+        let cfg = PermissionsConfig::default();
+        assert_eq!(cfg.check("shell", "rm -rf /"), PermissionAction::Allow);
+        assert!(cfg.is_default());
+    }
+
+    #[test]
+    fn repeated_checks_answer_identically_through_the_glob_cache() {
+        let cfg = rules(PermissionAction::Allow, &["git *"], &["git push *"]);
+        for _ in 0..3 {
+            assert_eq!(
+                cfg.check("shell", "git push origin main"),
+                PermissionAction::Deny
+            );
+            assert_eq!(cfg.check("shell", "git status"), PermissionAction::Allow);
+            assert_eq!(cfg.check("shell", "hg status"), PermissionAction::Allow);
+        }
+    }
+
+    #[test]
+    fn deny_beats_allow() {
+        let cfg = rules(PermissionAction::Allow, &["git *"], &["git push *", "rm *"]);
+        assert_eq!(cfg.check("shell", "git status"), PermissionAction::Allow);
+        assert_eq!(
+            cfg.check("shell", "git push origin"),
+            PermissionAction::Deny
+        );
+        assert_eq!(cfg.check("shell", "rm -rf /tmp/x"), PermissionAction::Deny);
+    }
+
+    #[test]
+    fn default_applies_when_no_pattern_matches() {
+        let cfg = rules(PermissionAction::Ask, &["cargo *"], &[]);
+        assert_eq!(cfg.check("shell", "cargo test"), PermissionAction::Allow);
+        assert_eq!(cfg.check("shell", "make all"), PermissionAction::Ask);
+    }
+
+    #[test]
+    fn entry_default_allow_keeps_yolo_for_unmatched() {
+        let cfg = rules(PermissionAction::Allow, &[], &["curl *"]);
+        assert_eq!(cfg.check("shell", "echo hi"), PermissionAction::Allow);
+        assert_eq!(cfg.check("shell", "curl http://x"), PermissionAction::Deny);
+    }
+
+    #[test]
+    fn rules_are_per_tool() {
+        let cfg = rules(PermissionAction::Deny, &[], &[]);
+        assert_eq!(cfg.check("shell", "echo hi"), PermissionAction::Deny);
+        assert_eq!(cfg.check("write", "{}"), PermissionAction::Allow);
+    }
+
+    #[test]
+    fn confine_paths_defaults_on_and_explicit_false_is_honoured() {
+        let cfg: PermissionsConfig = toml::from_str("").unwrap();
+        assert!(cfg.confine_paths);
+        assert!(PermissionsConfig::default().confine_paths);
+        assert!(cfg.is_default());
+        let cfg: PermissionsConfig = toml::from_str("confine_paths = false").unwrap();
+        assert!(!cfg.confine_paths);
+        assert!(!cfg.is_default());
+    }
+
+    #[test]
+    fn subject_for_canonicalizes_key_order() {
+        // The subject is canonicalized with sorted object keys, so a
+        // deny pattern written to mirror the model's emission order
+        // still matches the canonical subject.
+        let input = serde_json::json!({"path": "/tmp/a", "content": "data"});
+        assert_eq!(
+            PermissionsConfig::subject_for(&input),
+            r#"{"content":"data","path":"/tmp/a"}"#
+        );
+    }
+
+    #[test]
+    fn subject_prefers_command_field() {
+        let input = serde_json::json!({"command": "cargo test", "timeout": 30});
+        assert_eq!(PermissionsConfig::subject_for(&input), "cargo test");
+        let input = serde_json::json!({"path": "src/main.rs"});
+        assert_eq!(
+            PermissionsConfig::subject_for(&input),
+            r#"{"path":"src/main.rs"}"#
+        );
+    }
+
+    #[test]
+    fn validate_rejects_bad_glob() {
+        let cfg = rules(PermissionAction::Allow, &[], &["[unclosed"]);
+        assert!(cfg.validate().is_err());
+        let cfg = rules(PermissionAction::Allow, &[], &["ok *"]);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn action_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&PermissionAction::Allow).unwrap(),
+            "\"allow\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PermissionAction::Ask).unwrap(),
+            "\"ask\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PermissionAction::Deny).unwrap(),
+            "\"deny\""
+        );
+    }
+
+    #[test]
+    fn toml_roundtrip() {
+        // Parsed standalone, so the `[permissions]` wrapper header is
+        // absent: these tables are the module's own root.
+        let src = r#"
+            confine_paths = true
+
+            [tools.shell]
+            default = "ask"
+            allow = ["git *"]
+            deny = ["rm -rf *"]
+        "#;
+        let cfg: PermissionsConfig = toml::from_str(src).unwrap();
+        assert!(cfg.confine_paths);
+        assert_eq!(cfg.check("shell", "rm -rf /"), PermissionAction::Deny);
+        assert_eq!(cfg.check("shell", "git status"), PermissionAction::Allow);
+        assert_eq!(cfg.check("shell", "ls"), PermissionAction::Ask);
+        assert!(!cfg.is_default());
+    }
+
+    #[test]
+    fn mcp_action_defaults_to_ask_and_honours_entries() {
+        let mut cfg = PermissionsConfig::default();
+        assert_eq!(cfg.mcp_action("github"), PermissionAction::Ask);
+        cfg.mcp.insert("github".to_owned(), PermissionAction::Allow);
+        cfg.mcp.insert("shell".to_owned(), PermissionAction::Deny);
+        assert_eq!(cfg.mcp_action("github"), PermissionAction::Allow);
+        assert_eq!(cfg.mcp_action("shell"), PermissionAction::Deny);
+        assert_eq!(cfg.mcp_action("other"), PermissionAction::Ask);
+        assert!(!cfg.is_default());
+    }
+
+    #[test]
+    fn mcp_table_parses_from_toml() {
+        let src = r#"
+            [mcp]
+            github = "allow"
+            shell = "deny"
+        "#;
+        let cfg: PermissionsConfig = toml::from_str(src).unwrap();
+        assert_eq!(cfg.mcp_action("github"), PermissionAction::Allow);
+        assert_eq!(cfg.mcp_action("shell"), PermissionAction::Deny);
+        assert_eq!(cfg.mcp_action("fs"), PermissionAction::Ask);
+    }
+
+    #[test]
+    fn mcp_wildcard_covers_unlisted_servers() {
+        let src = r#"
+            [mcp]
+            "*" = "allow"
+            shell = "deny"
+        "#;
+        let cfg: PermissionsConfig = toml::from_str(src).unwrap();
+        assert_eq!(cfg.mcp_action("github"), PermissionAction::Allow);
+        assert_eq!(cfg.mcp_action("fs"), PermissionAction::Allow);
+        assert_eq!(cfg.mcp_action("shell"), PermissionAction::Deny);
+        let cfg: PermissionsConfig = toml::from_str("[mcp]\nshell = \"deny\"\n").unwrap();
+        assert_eq!(cfg.mcp_action("github"), PermissionAction::Ask);
+    }
+
+    #[test]
+    fn mcp_wildcard_parses_when_only_key() {
+        let cfg: PermissionsConfig = toml::from_str("[mcp]\n\"*\" = \"allow\"\n").unwrap();
+        assert_eq!(cfg.mcp_action("anything"), PermissionAction::Allow);
+        assert!(!cfg.is_default());
+    }
+}

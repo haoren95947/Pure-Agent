@@ -1,0 +1,15 @@
+[package]
+name = "pure-extension-hello"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Example Pure Agent ABI v4 extension (echo tool + event + resources_discover)"
+
+[lib]
+name = "pure_extension_hello"
+crate-type = ["cdylib"]
+
+[dependencies]
+pure-plugin-sdk = { workspace = true }
+serde_json = { workspace = true }

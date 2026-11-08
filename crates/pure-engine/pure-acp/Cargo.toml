@@ -1,0 +1,62 @@
+[package]
+name = "pure-acp"
+version = "0.2.14"
+edition.workspace = true
+rust-version = "1.85"
+license.workspace = true
+authors.workspace = true
+description = "ACP agent server for pure"
+readme = "README.md"
+keywords = ["pure", "acp", "agent-protocol", "zed", "stdio"]
+
+[package.metadata.pure.prebuilt]
+supported-targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+# Standalone ACP bridge: same server as the extension, but it owns its own
+# stdin/stdout, so an ACP client can launch it without any `pure` host changes.
+# Named `-bridge` (not `pure-acp`) so its debug-info stem does not collide with
+# the `pure_acp` cdylib in the same package.
+name = "pure-acp-bridge"
+path = "src/main.rs"
+
+[dependencies]
+pure-extcore = { path = "../pure-extcore", version = "0.2.12" }
+pure-harness = { path = "../pure-harness", version = "0.21.0" }
+pure-tools = { path = "../pure-tools", version = "0.21.0" }
+rpi-plugin-sdk = { workspace = true, features = ["stdio"] }
+reqwest = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "process",
+    "io-util",
+    "io-std",
+    "macros",
+    "net",
+] }
+
+[dev-dependencies]
+pure-extcore = { path = "../pure-extcore", version = "0.2.12", features = ["test-support"] }
+
+[[example]]
+name = "configuration_fixture"
+path = "examples/configuration_fixture.rs"
+crate-type = ["cdylib"]
+test = false

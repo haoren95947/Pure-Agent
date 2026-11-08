@@ -1,0 +1,1110 @@
+# pure-acp
+
+Run **pure as an external agent in Computer, [Zed](https://zed.dev)** or any client
+that speaks the [Agent Client Protocol](https://agentclientprotocol.com) over a
+single `pure --acp` process.
+
+```
+Computer / Zed  ──ACP over stdio──▶  pure --acp  ──spawn──▶  pure --mode rpc  (per session)
+```
+
+## Shared runtime
+
+The source implementation delegates native RPC children, isolated command requests, run acceptance/settlement, text reconciliation, history traversal and question answer validation to [pure-extcore](../pure-extcore/README.md). This package retains ACP serialization, capabilities, client requests and Zed/terminal-auth integration. Its existing extension and bridge entrypoints and session storage paths remain unchanged. See the [architecture contract](../../docs/architecture/extension-core.md).
+
+A compatible native external-tool build is required for nonempty MCP
+configuration; updating only the bridge does not upgrade the host.
+
+## Tool name fidelity
+
+Stable ACP v1 `ToolCall.name` and `ToolCallUpdate.name` preserve a supplied native
+programmatic tool name verbatim on start, nonempty progress, end, and saved
+result replay. The name is distinct from the human-readable `title`; no trimming,
+MCP export reverse-mapping, invented alias or name cache is used. Missing, null
+or non-string native names are omitted, not replaced with the generic display
+fallback `tool`. Legacy replay does not guess a missing result name from an
+adjacent call. Empty progress remains suppressed; status/kind, diff/todo/plan,
+raw input/output and run/transport lifecycle behavior are unchanged.
+
+This is a small optional-field fidelity fix: starts already carried known native
+names, and omitted update names previously meant “unchanged” to clients. It is
+not a new tool engine or a claim of complete ACP capability coverage. Existing
+extcore raw events and validated history already preserve the source metadata;
+only ACP wire presentation changes, with no new core API or transcript owner.
+Rust projection and production-prompt fixtures cover supplied/absent names and
+partial progress. The separate Windows `tests/tool_names_native.py --help` proof
+requires explicit frozen bridge/native provenance and checks actual read success,
+failure, raw native events/JSONL and fresh load/resume. Native read need not emit
+partial updates: inspect recorded phases; do not infer native progress coverage
+from fixtures or authored harnesses. Neither qualifies an installed extension,
+Unix native execution or deployment.
+
+## Context usage updates
+
+ACP v1 `usage_update` reports the native context estimate as `used` and the
+native model's full window as `size`. After a successful new/load/resume response
+and available-commands notification, the adapter projects the state already read
+during startup/preflight. A repeated live load/resume forces a fresh initial
+notification from that preflight snapshot. After an authoritative prompt or
+`/compact` settlement (including failed/cancelled settlements), one best-effort
+core read may send a changed used/window pair before the prompt response.
+Rejection or malformed acceptance does not trigger this read. Equal successfully
+delivered pairs are coalesced; this is not per-turn token accounting.
+
+No extra usage poller or transcript walk is introduced by the adapter/core API.
+Independent native changes, including model/window changes, are not continuously
+observed by this slice; they become visible at the next lifecycle/settlement
+refresh. Initial state is a preflight snapshot, not an atomic transaction with
+notification delivery. Missing context, unknown/zero window, bad fields,
+identity mismatch or an unavailable/timed-out read suppress usage without changing
+the session/run outcome. Only new usage frames have a 2-second write deadline;
+a partial-frame failure makes the **whole connection terminal**, not merely one
+session. Existing non-usage/configuration writes retain their prior behavior.
+
+The number is native's compaction-aware active-branch estimate: last valid
+assistant usage plus estimated trailing messages, or a character-based estimate
+when no valid usage exists. Even native `estimated: false` can include estimated
+trailing tokens. It is not exact provider tokenization, cumulative session tokens,
+or the compaction threshold. Native `get_state` may still scan the full branch;
+the 5-second caller budget does not hard-preempt that native computation.
+`cost` is omitted: native's scalar `costTotal` has no verified billing-unit or
+currency provenance, and no USD or cost accumulator is invented.
+
+Core fixtures and production-dispatch/transport fixtures are separate from the
+Windows real-native proof in `tests/context_usage_native.py --help`. The latter
+requires frozen prebuild source inventories and explicit recorded binaries;
+inspect retained results, independent raw `get_state`, provider replies, native
+JSONL and cleanup/audit evidence before claiming a pass. Neither fixture CI nor
+that Windows proof qualifies an installed extension, Unix native or deployment.
+
+## How it works
+
+Open WebUI Computer can use the same standard ACP entrypoint. Deploy and
+configure Computer separately; this package provides the ACP protocol,
+sessions and Zed registration. The standalone `pure-acp-bridge` uses the same
+server implementation as the `pure-acp` extension. All implementation modules
+are part of this package.
+
+`pure-acp` is a `cdylib` extension. It does three things:
+
+1. **Claims the process stdio.** When `--acp` is present, the extension reads
+   the flag *during plugin registration* and `declare`s
+   `{"ownsStdio": true}`. The host then (a) does **not** drain piped stdin, and
+   (b) runs its headless `Rpc` lifecycle instead of the TUI/print modes, waiting
+   for the owner to finish or Ctrl+C. From that point the process's stdin/stdout belong to this
+   extension. This is what makes an ACP stdio server possible inside an `pure`
+   process at all — see *Requirements* below.
+2. **Serves ACP v1** on stdio (`initialize`, `session/new`, `session/prompt`,
+   `session/cancel`, `session/load`, `session/resume`, `session/list`,
+   `session/set_config_option` and the pure extension `session/durable`. See
+   `src/protocol.rs`.
+3. **Backs each ACP session with a child `pure --mode rpc` process** rooted at
+   the session's `cwd`, translating its event stream into ACP `session/update`
+   notifications (streamed text, thinking, tool calls). See `src/session.rs`.
+
+The host process itself runs no model call: every prompt is served by the child,
+so tools, models, auth, skills and extensions behave exactly as in an
+interactive `pure` session.
+
+Resource references preserve the exact URI, including its scheme, encoding,
+query and fragment. A named link is sent as `@name (uri)`; an unnamed link or
+embedded resource without text is sent as `@uri`. This conversion does not fetch
+the resource or enumerate a referenced directory. Embedded text remains inline.
+The real-native loopback regression is
+`python -B packages/pure-acp/tests/resource_uri.py --bridge <bridge> --pure <pure>`.
+
+### Session persistence
+
+New ACP sessions use stable UUIDs and persist native pure JSONL history under
+`~/.pure-agent/agent/acp/sessions`. `RPI_ACP_SESSION_DIR` can override this with an
+absolute directory. The files remain when Zed or the ACP process exits.
+
+`session/load` restores the backend context and replays the active branch's user
+messages, assistant text/thinking, and tool calls/results before responding.
+`session/resume` restores context without replay, for clients that already have
+the transcript. An unknown or missing session returns an error rather than
+silently opening an empty conversation. Sessions created by ACP 0.1.1 and older
+were temporary (`--no-session`) and cannot be restored after their backend exits.
+
+Replay is prepared and validated by core before any ACP update is emitted.
+Native paging is at most 128 messages / 8 MiB of serialized reply data per page,
+anchored to a stable leaf, total count and event boundary. A private temporary
+page spool (512 MiB maximum; Unix mode 0600) reverses the newest-first page
+traversal without retaining the full transcript. Preparation is limited to 30
+seconds, with each
+RPC limited to 15 seconds or the remaining budget. Before replay emission, ACP
+also requests a non-consuming, one-page-at-a-time core validation walk with a
+separate 30-second budget. These are two bounded phases, not one aggregate
+30-second load deadline. Old hosts that do not
+advertise `get_messages` instead use a genuinely bounded native-file read
+(64 MiB total, 8 MiB per line); malformed advertised paging never falls back.
+Oversized, incomplete or changing histories return a session error, not
+truncated success. An already attached backend survives replay errors.
+`session/resume` does not request pages or perform adapter/core transcript reads
+for replay; native still restores its own context. See the
+[core history contract](../pure-extcore/README.md#bounded-active-branch-replay-preparation)
+for cleanup and filesystem caveats. Load still runs inline in the existing ACP
+dispatcher: a client cancellation received during load is processed only after
+load returns, not as an immediate interruption of preparation or replay.
+Validated client responses (including filesystem acknowledgements) are routed
+independently while lifecycle work waits. Other incoming requests retain FIFO
+ordering in a 64-item queue; overflowing that queue closes the connection with
+an error rather than stalling responses behind an unbounded backlog.
+
+Run the model-free paged/old-host fixture with
+`python -B packages/pure-acp/tests/bounded_history.py --bridge <bridge>`.
+For a real native v4 transcript with 513 active and 19 off-branch messages,
+use `python -B packages/pure-acp/tests/bounded_history_native.py --bridge <bridge> --pure <pure>`;
+it verifies five native pages and exact replay across fresh process restarts.
+
+### Discovering saved sessions
+
+Initialization advertises ACP v1 `sessionCapabilities.list: {}`.
+`session/list` accepts absent/null/object params with optional nullable `cwd`
+and `cursor`. `cwd` must be an existing absolute directory. The connection
+captures the existing ACP session-root configuration once; listing does not
+create it, launch native/MCP processes, run models, or modify saved sessions.
+It discovers persisted native transcripts, not merely in-memory sessions.
+
+Responses contain `sessions` with `sessionId`, absolute recorded `cwd` and,
+when representable, `updatedAt` from observed file mtime. That timestamp is not
+authoritative last user/model activity. This slice deliberately omits `title`,
+message counts and private filesystem/tool configuration. Wire pages are fixed
+at 50; client metadata cannot increase them. Ordering is native header creation
+time descending, then canonical UUID ascending, not mtime.
+
+**Continue while `nextCursor` is present, including empty scan pages.**
+Cursors are opaque and connection-local; retain the same cwd filter. Scan tokens
+are single-use, including the scan request that returns the first populated
+page. Tokens issued for frozen result pages are retryable. Idle tokens expire
+on later admission after 60 seconds; fresh queries may evict an older nonbusy
+generation (maximum two). Restart with no cursor after `-32602` for a stale or
+invalid token. New/deleted files require a fresh query; discovery is not a
+transaction and a listed session may no longer load.
+
+The neutral [core catalog contract](../pure-extcore/README.md#read-only-session-discovery)
+sets global and per-step budgets, validates native v4 identity/layout and bounds
+first-line parsing to 64 KiB (small charged read-ahead is possible). No transcript
+body/tail is parsed. Invalid params/cursors map to `-32602`, request cancellation
+or deadline to `-32800`, and resource/access/conflict/unavailable failures to
+fixed sanitized `-32001` errors. `$/cancel_request` targets just that list
+request. EOF/host shutdown cancels and joins tasks/workers without requiring a
+stalled peer to drain response bytes; final delivery is best effort after
+transport closure. OS filesystem calls remain cooperative, not hard-preemptible;
+filesystem checks are not a hostile concurrent-writer sandbox. Cwd is a filter,
+not authentication or an authorization boundary.
+
+Focused Rust tests exercise the production dispatcher with replaced transport,
+plus synthetic native-header fixtures. Three-platform CI is fixture-only.
+`python -B packages/pure-acp/tests/session_list_native.py --help` describes the
+separate Windows real-native proof and required prebuild source/binary
+provenance. Its three native-created conversations are distinct from the
+101-file synthetic pagination fixture. Inspect actual retained results before
+claiming a native pass; neither source nor CI qualifies an installed extension,
+Unix native execution or deployment.
+
+### Client-provided MCP tools (stdio and Streamable HTTP)
+
+`session/new`, `session/load` and `session/resume` accept the ACP v1 shape:
+
+```json
+{
+  "cwd": "/absolute/workspace",
+  "mcpServers": [{
+    "name": "workspace-tools",
+    "command": "./bin/mcp-server",
+    "args": ["--stdio"],
+    "env": [{"name": "EXAMPLE_TOKEN", "value": "client-supplied"}]
+  }]
+}
+```
+
+`load` and `resume` also require `sessionId` as usual. No `type` is required
+for stdio: explicit `type: "stdio"` / `transport: "stdio"` are also accepted.
+HTTP requires explicit `type: "http"` (a matching `transport: "http"` is optional):
+
+```json
+{
+  "cwd": "/absolute/workspace",
+  "mcpServers": [{
+    "type": "http",
+    "name": "remote-tools",
+    "url": "https://tools.example/mcp?tenant=workspace",
+    "headers": [{"name": "Authorization", "value": "Bearer client-supplied"}]
+  }]
+}
+```
+
+HTTP entries require `name`, `url` and `headers`; `headers` must be an array
+(use `[]` for none), never an object. Static Authorization/custom headers are
+supported, not OAuth or credential refresh. Header names are lowercased and
+case-insensitive duplicates rejected before insertion. Names must be ASCII HTTP
+tokens and values control-free; empty values are valid. Transport/framing and
+hop-by-hop headers are forbidden, including Host, Accept, Content-Type/Length,
+MCP session/protocol headers and proxy headers; see the
+[full core header policy](../pure-mcp-core/README.md#in-memory-streamable-http-targets-tools-only).
+URLs must be absolute HTTP(S) with a host, without userinfo (even empty),
+fragment, surrounding whitespace or controls. Queries are opaque and may contain
+secrets. HTTP entries reject `command`/`args`/`env`; stdio rejects URL/headers.
+Conflicting transport fields, unknown transports and legacy `sse` are rejected.
+Initialization advertises `mcpCapabilities.http: true` and `sse: false`:
+Streamable HTTP POST JSON and POST response-body SSE are supported, not legacy
+SSE or background GET streams. This integration is tools-only: no MCP resources,
+prompts or sampling.
+
+Typed HTTP disables ambient proxies and redirects; legacy MCP APIs are unchanged.
+Client configuration grants outbound authority including local/private HTTP;
+this is **not an SSRF sandbox**. Only accept configuration from trusted clients
+and prefer HTTPS, especially for secrets.
+
+Extra ACP metadata is ignored. Server names and environment names must be
+unique; `env` is an array, not an object. `name`, `command`, `args`, and `env`
+are required on each stdio entry. NULs, blank names/commands, malformed fields and
+oversized configurations fail with value-free validation errors. Limits are
+16 servers, 200-byte names, 128 arguments and 128 environment entries per
+server, 16 KiB per command/argument/environment value, and 256 KiB encoded
+configuration (including extra metadata). Empty arguments and env values are
+allowed; env names cannot contain `=`. HTTP allows up to 128 headers, with
+16 KiB per URL/header name/value and the same total encoded configuration bound.
+
+Commands containing `/` or `\` are resolved against the explicit session
+`cwd` if relative; bare executable names retain PATH lookup. Both separators
+are accepted for relative paths. The MCP process uses that session cwd, not
+the ACP launch directory. Native session identity is checked before MCP
+configuration. Extcore owns discovery, native tool registration, calls,
+cancellation, deadlines and child cleanup; ACP only validates/maps the config.
+Tool execution continues through the existing native ACP tool-event formatting.
+Hosts without native external-tool support still work with no MCP config;
+nonempty config fails rather than silently omitting tools.
+
+Omitting `mcpServers` on a new or freshly restored session means no MCP servers.
+On a live session, omission retains its configuration. Explicit identical
+configuration is allowed; an explicit different configuration (including
+clearing an existing nonempty config with `[]`) fails before history replay.
+Close and reopen to change it. Clients **must reprovide** the configuration
+when loading/resuming in a fresh ACP process: MCP configuration, argument/env
+secrets, URLs/opaque queries and headers are not persisted in ACP transcripts,
+registry metadata or another DB. Live equality includes cwd/scope and normalized
+header names; identical configuration does not rediscover or revive a failed target.
+
+For fresh load/resume with nonempty MCP configuration, the recorded native
+workspace must match requested `cwd` after canonical resolution. An existing
+recorded directory that differs is rejected **before native or MCP spawn**;
+request that recorded cwd rather than expecting client configuration to be
+silently rebased. An empty, missing, or no-longer-directory recorded cwd retains
+native launch-cwd fallback. The preflight validates the native v4 header and
+exact session ID with a 64 KiB first-line limit; malformed/missing cwd metadata
+is rejected for this opt-in path. It reads no messages and persists no new
+metadata. No-MCP restore behavior stays compatible. This is a filesystem
+snapshot, not protection against concurrent local directory/transcript rewrites.
+
+Native pure owns tool registration, schema validation, call provenance, result
+validation/projection and persisted history. Extcore forwards raw MCP
+`externalToolResult` (including `isError`, structured content and text/image
+metadata); unsupported content produces explicit errors, not silently dropped
+blocks. ACP only formats the resulting native tool events and replay for its
+client. Before spawning an MCP child or contacting an HTTP endpoint, extcore
+requires native commands
+`configure_external_tools` / `external_tool_response` and events
+`external_tool_request` / `external_tool_request_closed`. An empty configuration
+remains compatible with older hosts.
+
+Catalogs are limited to 128 tools / 256 KiB, discovery to 30 seconds total,
+calls to 45 seconds, active requests and the reliable reader queue to 64, and
+native outcome frames to 1 MiB. Export names are deterministic 64-character
+`mcp_` + 60 SHA-256 hex digits of a length-delimited server/tool tuple, within an
+explicit per-session runtime scope. Calls use frozen live-generation admission:
+no automatic reconnect, tool requery or replay after transport/RPC failure,
+cancellation or HTTP 404; explicit successful fresh discovery is required.
+An MCP result with `isError` is still a result, not a reconnect trigger. Session
+shutdown and owner drop cancel calls and clean up their owned runtime. HTTP
+cancellation notification (200 ms) and session DELETE (1 second) are best-effort
+per-connection request timeouts, not a global hard shutdown bound, guaranteed
+remote cleanup or undo of remote side effects. This adds no MCP OAuth, resources,
+prompts, sampling, legacy SSE/GET, plugin activation or remote attachment, and
+makes no native/Web implementation change.
+
+### MCP validation and native smoke
+
+Source parser/protocol and extcore host tests cover strict configuration,
+identity/capability gates, live configuration handling, cancellation and cleanup.
+`cargo test --locked -p pure-extcore --features test-support --test mcp_stdio_bridge`
+uses real MCP shell children but an in-memory native peer.
+`cargo test --locked -p pure-extcore --features test-support --test mcp_http_bridge`
+uses loopback HTTP MCP with the same fixture-native boundary. Core HTTP fixtures
+run with `cargo test --locked -p pure-mcp-core configured_http_tests`. The three-OS
+CI runs these and existing Rust checks; it has no real-native binary and does
+**not** run the real-native smoke.
+
+The Windows-only standard-library Python harness uses explicit verified binaries
+and a local model/MCP fixture, with no installed configuration or real credentials.
+Inspect its required provenance arguments before running:
+
+```text
+python -B packages/pure-acp/tests/mcp_stdio_native.py --help
+python -B packages/pure-acp/tests/mcp_stdio_native.py --bridge <absolute-bridge.exe> --pure <absolute-pure.exe> --diagnostics-dir <new-evidence-dir> --build-marker <bridge-build-marker.json> --native-build-record <native-build-record.json> --native-verification <native-verification.json> --native-sha <native-sha256>
+```
+
+Use an existing successful bridge build marker and native build/verification
+records matching the binaries; the harness verifies hashes before execution.
+The diagnostics directory must be new and beneath the build marker's parent or
+`TEMP`; failure evidence is retained. Inspect its `results.json`, provenance,
+wire logs, native JSONL and PID audit for actual execution results, rather than
+inferring success from the existence of the harness.
+
+The new Windows proof harness `packages/pure-acp/tests/mcp_http_native.py --help`
+uses loopback HTTP fixtures and requires the same explicit `--bridge`, `--pure`,
+`--diagnostics-dir`, `--build-marker`, `--native-build-record`,
+`--native-verification` and `--native-sha` inputs. It verifies bridge/native
+hashes and source/build provenance before execution, does not search PATH or
+build binaries, and requires a new evidence directory under
+`C:/Users/bigfish/.cargo/target/acp-stage6-01`. It is not part of fixture-only CI.
+It also requires a complete source-hash manifest, audits provider requests/tool
+definitions and local persistence/output for fake credential canaries, and retains
+failure evidence. Successful runs qualify only the recorded Windows binary/source
+hashes; they do not certify an installed extension, Unix native execution, TLS,
+remote resource reclamation or a hard global shutdown deadline.
+
+### Durable control plane
+
+pure-aware ACP clients may call the extension method
+`session/durable` with `params.sessionId`. Use `{"operation":"status"}` to
+read the branch-scoped durable state, or use `start_run`, `settle_run`,
+`recover_run`, `enqueue`, `claim`, `finish` and `cancel` to coordinate durable
+runs and queue items. The method persists through the native session branch,
+never replays tool side effects, and does not start a background scheduler.
+Standard ACP clients can ignore the extension; capability metadata marks
+`pure/durable` as optional. Successful durable mutations and durable state
+changes observed during a prompt also produce the custom notification
+`session/durable_update` with `{sessionId, revision, state}`. If the native host
+lacks branch operations, normal ACP sessions continue to work and
+`session/durable` returns an unavailable error.
+
+### Read-only Code Mode child queries
+
+The optional `agentCapabilities._meta["pure/tool-program-children"]` v1 descriptor
+advertises `optional: true`, `recovery: "readOnly"` and exactly these methods:
+
+* `session/tool_program_children` — core `ChildPageQuery` → `ChildPage`.
+* `session/tool_program_phases` — core `ChildPhaseQuery` → `ChildPhasePage`.
+* `session/tool_program_body` — core `ChildBodyQuery` → `ChildBodyPage`.
+* `session/tool_program_snapshot` — core `ChildSnapshotQuery` → `ChildSnapshot`.
+
+Each request is exactly `{sessionId: string, query: <typed core DTO>, _meta?: object}`;
+unknown outer/nested fields and malformed types are rejected. `sessionId` must be
+nonempty, control-free and at most 512 UTF-8 bytes. The session must already be
+attached to this ACP connection. Explicit callers need not advertise a client
+capability. The adapter forwards the typed core result directly, without adding
+an envelope, projecting child cards, fetching bodies for summaries, or opening a
+session. These methods neither execute tools nor retry, scan transcripts or fall
+back to another session/source. Query DTOs/budgets and cursor source validation
+remain owned by [extcore](../pure-extcore/README.md).
+
+Adapter availability at initialize does not claim a native profile. Every read
+checks the existing host through core; older/incompatible hosts fail explicitly.
+Snapshot additionally requires core's exact native child-event profile to validate
+its bounded metadata/replay boundary. The descriptor also contains an optional
+`live` object (`snapshotFirst: true`, `maxSubscriptions: 16`) advertising the
+vendor methods `session/tool_program_subscribe` and
+`session/tool_program_unsubscribe`, plus the notification
+`session/tool_program_update`. These are deliberately not standard
+`session/update` messages: clients must opt into the `pure` metadata contract.
+
+Subscribe params add a caller-owned `subscriptionId` to the same typed snapshot
+query. The response contains the bounded snapshot before any update notification
+is emitted. Every later notification has `{sessionId, subscriptionId, update}`;
+`update` is a typed child update or a terminal `resyncRequired` item from core.
+Lag, branch/generation changes, host replacement/closure, invalid native events,
+or native resync end the subscription with an explicit resync reason. The client
+must issue a fresh bounded subscription after resynchronizing; the adapter never
+fabricates a child event or silently resumes from an uncertain cursor. Core
+additionally requires native `toolProgramBranch` v1 (`get_tool_program_branch`,
+`bindingAndLaneGeneration`). Ordinary append keeps the generation; navigation/ABA
+and live binding replacement do not. Hosts lacking this exact profile still
+support their existing read-only pages/snapshot but cannot subscribe.
+
+Subscriptions belong to one ACP connection and are capped at 16. Duplicate
+subscription IDs, wrong-session unsubscribe requests, malformed envelopes and
+unknown fields are rejected. `$/cancel_request`, `session/cancel`, close/delete,
+EOF and shutdown cancel and join pending snapshot work and live watchers before
+retiring the session or connection. The optional feed does not execute tools,
+create a transcript owner or change standard ACP `session/update` semantics.
+Summary state remains `unknown`; scan exhaustion is not child settlement, and
+returned body chunks do not verify unread chunks or whole-body integrity.
+
+Core `InvalidInput`/`NotFound` map to JSON-RPC `-32602`; other core failures map to
+`-32001`. Typed core failures include bounded, sanitized `error.data.code` (for
+example `tool_program_queries_unsupported`, `child_snapshot_resync_required`, or
+`host_unavailable`), preserving only known neutral diagnostics, never raw native
+errors, paths or adapter debug output. Envelope/unknown-session errors retain
+ordinary ACP errors. Reads run in a connection-owned registry of at most 64 tasks,
+including tasks finishing response writes. Capacity returns bounded `-32001`
+`child query task limit exceeded`; completed handles are reaped on next input.
+Request IDs are checked across prompt, list and child-query tasks, preserving the
+difference between numeric `1` and string `"1"`. Other requests and cancellations
+remain dispatchable while a native read is pending.
+
+`$/cancel_request` drops/joins the exact query task without a query completion;
+`session/cancel` cancels all queries for that session in addition to existing
+prompt-abort behavior. Close/delete stop its queries before retiring the session;
+EOF and host shutdown abort/drain every query task. Query-only cancellation never
+aborts a native run or kills the shared child. Core owns correlation retirement
+on future drop and the 30-second query/snapshot deadline; late native replies do
+not revive a request, and there is no automatic replay. A completion already
+written cannot be recalled. Cancellation of a partial response write retains
+Writer's **whole-connection terminal** policy: no cancellation acknowledgement is
+promised once that writer is terminal.
+
+Deterministic in-memory native RPC fixtures cover all four typed projections,
+strict envelopes/nested fields, cursor/budget preflight without native writes,
+old-host rejection, sanitized native errors, unknown sessions/methods and v1
+initialize compatibility. Ingress tests hold unanswered native queries while checking
+ordinary-request progress, exact cancellation/correlation retirement, typed IDs,
+cross-method duplicates, session cancel/close/delete, EOF/host shutdown, the
+64-task limit and the actual 30-second deadline. Partial-write cancellation and
+finishing-response slot/ID retention have deterministic output fixtures. These
+tests do not establish real-native execution or deployment.
+
+The separate opt-in Windows `tests/tool_program_native.py --help` proof binds
+explicit prebuild source inventories and bridge/native/launcher SHA-256s. Current
+read-only recovery evidence covers 26 sessions / 70 children / 38 selected
+children, first body chunk only for each selected child, and zero execution
+frames; it is not full-body aggregate integrity or live-notification proof.
+The separate opt-in Windows `tests/tool_program_live_native.py --help` proves
+one real post-ACK live path with explicit test bridge/native/launcher/Code Mode
+binaries and prebuild provenance. Its loopback synthetic model calls the real
+DLL, which runs a real bash child. A file gate holds the child until a successful
+subscribe ACK; notifications must be ordinary `update` (never resync), include
+final/closed, reconcile ID/seq/parent/data to native entries, and end in succeeded.
+The proof normalizes only the five known optional phase DTO fields from absent
+to null, not descriptors or identity values. Retained exact process handles
+verify child exit and bridge/launcher/native cleanup without recursive PID kills.
+Local `target/branch-live-native-5/` and final-source repeat
+`target/branch-live-native-6/` each passed with three matched post-ACK updates;
+failed attempts 1–4 are not passing evidence. This does not qualify full parity,
+all native cancellation/fork cases, HTTP live, UI/HMR, Unix or external providers.
+
+Example (all binaries must already be built; this command does not build/install):
+
+```text
+python packages/pure-acp/tests/tool_program_live_native.py --bridge <absolute bridge.exe> --native <absolute pure.exe> --launcher <absolute tool_program_live_launcher.exe> --codemode <absolute rpi_codemode.dll> --build-evidence <provenance.json> --out <new evidence directory>
+```
+
+Build the test-only launcher from `examples/tool_program_live_launcher.rs`.
+The provenance JSON supplies `sources: [{path, sha256}]` inventoried before build
+and `binaries: {bridge,native,launcher,codemode: {path,sha256}}` captured after
+successful builds; retain build logs, repository heads/diffs and inventory/build
+timestamps alongside it. The harness verifies every listed source and binary
+hash before starting, then retains the provenance, native/ACP wire, transcripts,
+ACK receive boundary, provider calls, cleanup and results. These are local build
+attestations, not cryptographic build reproducibility or automatic CI proof.
+
+For the recovered-read proof above, primary and progress files remain unchanged.
+Its process ownership is restricted to
+the direct bridge, verified direct launcher and its explicit native PID, using
+retained kernel handles, creation times and image path/hash checks. Cleanup never
+recursively kills a PID tree; manual exact-handle cleanup makes a case fail.
+Native EOF retirement may be exit 0 or owner termination 1, recorded verbatim;
+this does not qualify graceful native shutdown or system console cleanup.
+
+An earlier proof helper incorrectly inferred descendants from historical PIDs
+and terminated unrelated `work-cli` processes after PID reuse. That failed run
+is retained, not counted as acceptance. The corrected helper has focused mock
+safety regressions and fresh actual-native evidence; see the
+[current qualification](../../docs/codemode-full-parity-matrix.md#current-child-adapter-and-web-increment).
+No installed extension, Unix, provider, deployment, CI or full-parity claim.
+
+### Event mapping
+
+The child RPC uses `message` for prompt text and `success`/`data` for responses.
+A prompt's `data.accepted: true` response starts the turn; ACP waits for
+`agent_settled` before completing it and allowing another prompt.
+
+Streaming text is checked against cumulative message snapshots, including
+the final `message_end`. Missing text is sent before ACP reports completion,
+without duplicating chunks already delivered. Backend failures return an ACP
+request error; output length limits report `max_tokens` instead of `end_turn`.
+
+| pure `--mode rpc` event | ACP `session/update` |
+| --- | --- |
+| `message_update` / `text_delta` | `agent_message_chunk` |
+| `message_update` / `thinking_delta` | `agent_thought_chunk` |
+| `tool_execution_start` (`read`, `bash`, …) | `tool_call` (`in_progress`, `rawInput`) |
+| `tool_execution_start` (`todo`) | `tool_call` with a concise action title (without raw JSON arguments) |
+| `tool_execution_start` (`edit`/`write`) | `tool_call` with ACP `diff` content |
+| `tool_execution_update` | `tool_call_update` (`in_progress`, content) |
+| `tool_execution_end` (`todo`) | `tool_call_update` (`completed` / `failed`, content) |
+| `tool_execution_end` | `tool_call_update` (`completed` / `failed`, `rawOutput`) |
+| `tool_execution_end` (`plan_mode_complete`) | `plan` (step list + done markers) |
+| `tool_execution_end` (`todo`) | `plan` (live todo statuses, including completion) |
+| `agent_settled` with `outcome: aborted` | prompt `stopReason: cancelled` |
+| `agent_settled` with `outcome: completed` | prompt `stopReason: end_turn` (or `max_tokens` for length limits) |
+| rejected response or failed `agent_settled` | ACP request error |
+
+## Requirements
+
+* A current `pure` RPC host with prompt `message`, `success`/`data` responses,
+  and terminal `agent_settled` events.
+* `pure` whose plugin ABI supports the `ownsStdio` declaration (the field is
+  additive on the `declare` callback) and `StdioLifecycle` runtime action (21).
+  The owner reports EOF/completion to the host, which dispatches
+  `SessionShutdown` and returns its exit code. Conflicting owners are rejected.
+* A configured pure provider/model. The ACP host process resolves the default
+  model at startup (like `pure --server`); a missing credential is reported on
+  stderr and the process exits before the ACP server starts.
+* An ACP client on stdin. `--acp` speaks ACP over stdin, so it must be launched
+  by a client (Zed) through a pipe. Started from a terminal it fails fast — one
+  message plus exit code 2 — instead of leaving the host parked in its headless
+  lifecycle with a dead server. To register pure from a terminal, use
+  `pure --install-zed`.
+
+## Install
+
+```powershell
+pure install pure-acp
+# or, in this repo:
+task install
+```
+
+## Configure Computer (native ACP)
+
+Deploy Open WebUI Computer separately and configure its native ACP agent to
+launch the `pure` executable with `--acp`. Use an absolute executable path if
+Computer's environment does not put `pure` on `PATH`. The host must load the
+`pure-acp` extension and have a configured provider/model before serving ACP.
+
+The connection is JSON-RPC over stdin/stdout. Computer starts the agent process
+and communicates through its pipes; a separately started process has no ACP
+network endpoint to connect to. Each session starts a child `pure --mode rpc` in
+the `cwd` supplied by Computer.
+
+For container deployments, make the runtime, extension library, provider
+configuration and project accessible inside the container that starts `pure`.
+The path sent as `session/new.cwd` must exist there. Mount session history on a
+writable persistent volume and configure the agent process environment:
+
+| Variable | Purpose |
+| --- | --- |
+| `RPI_ACP_NO_AUTO_REGISTER_ZED=1` | Disable automatic Zed settings registration |
+| `RPI_ACP_SESSION_DIR` | Absolute directory for persistent ACP session history |
+| `RPI_CODING_AGENT_DIR` | pure configuration directory |
+| `RPI_BIN` | Optional override for the child pure executable |
+
+Permission dialogs use standard `session/request_permission`; the native client
+controls how it presents or answers them. General `ask_user` questions require
+the client to negotiate the [question extension](#question-extension-v1).
+The agent cancels unsupported questions. Client support also determines how
+session replay and cancellation appear in Computer's UI.
+
+## Configure Zed
+
+Add a custom external agent to Zed's `settings.json`
+(`agent: open settings` → *External Agents* → *Add Agent* → *Custom*):
+
+```json
+{
+  "agent_servers": {
+    "pure": {
+      "type": "custom",
+      "command": "pure",
+      "args": ["--acp"]
+    }
+  }
+}
+```
+
+On Windows, point `command` at the full path to `pure.exe` if it is not on
+`PATH`. Start an pure thread from the Agent Panel's new-thread menu.
+
+You can pass ordinary pure flags through `args`, e.g.
+`["--acp", "--model", "gateway/model"]`. The child session inherits the process
+environment, so provider API keys work as usual.
+
+### Skip permission approvals
+
+To skip bash/write/edit approval prompts, add `--bypass` to the existing Zed
+agent's arguments:
+
+```json
+"args": ["--acp", "--bypass"]
+```
+
+Save the settings and restart Zed before starting a new pure thread.
+
+### Model and Provider selection
+
+For an pure host that supports the native RPC model catalog, each ACP session
+returns a `model` Session Config Option. Its values use `provider/model`, so
+selecting a model also selects its Provider; when several Providers are
+available, Zed receives them as grouped choices. `session/set_config_option`
+forwards the selected value to the child RPC as `modelId` plus `provider`.
+Thinking levels use option ID `thinking` (category `thought_level`).
+
+### Live configuration updates
+
+For hosts advertising `get_state` and `get_available_models`, ACP uses extcore's
+[single bounded observer](../pure-extcore/README.md#live-runtime-configuration).
+Successful new/load/resume replies contain the full `configOptions` list;
+subscription precedes the reply, and forwarding starts only after it is written.
+Later presentation changes emit standard `session/update` with
+`sessionUpdate: "config_option_update"` and the full list, without needing a
+prompt. This covers the existing model/thinking selects only, not boolean
+options or session modes.
+
+The observer polls every 2 seconds (skipping missed ticks); each refresh has a
+10-second total budget including its mutation/refresh gate, with at most two
+state-bracketed consistency attempts. These are latest-state observations,
+not atomic native snapshots, ABA detection or an audit of every transition.
+Poll failures retain the last good state. The thinking query is optional.
+If native thinking current is outside its available choices, the typed ACP
+projection omits that select rather than inventing a selected value. Typed model
+setters resolve the advertised value against exact catalog identities, preserving
+slash-containing IDs and providerless models. If legacy wire values collide,
+the model select is omitted and ambiguous selections are rejected before native
+mutation. Missing observer capabilities keep the legacy configuration path; malformed replies
+from advertised capabilities do not silently fall back. Configuration stays
+native-owned and in memory: reopening reads fresh native startup/history state,
+not a bridge-persisted copy of the previous live selection.
+
+One connection-owned forwarder per session shares a projection/revision gate
+with `session/set_config_option`. Setters read back full native configuration
+and record the successfully delivered revision while holding that gate; a queued
+watch value cannot overwrite the setter reply. Repeated successful load/resume
+replaces/rebases the forwarder; failed replay retains the existing observer.
+Lifecycle broadcast lag is not treated as native closure.
+
+Only live configuration notifications and successful typed setter replies get
+an explicit 2-second write deadline (including output-lock wait/flush). Existing
+other writes do not acquire this deadline. An interrupted/failed frame or a
+configuration write timeout makes the **whole connection** terminal before a
+possibly partial JSON frame is discarded; no session can append another frame.
+Close/delete first clean up native resources and the core poll worker, then
+stop/drain the forwarder; if it cannot drain within 2 seconds the connection
+becomes terminal. Disconnect/host shutdown retire transport tasks. These are
+not a new global shutdown deadline or native-mutation rollback guarantee.
+
+Focused fixtures are `configuration_tests.rs`, `protocol_configuration_tests.rs`
+and `protocol_configuration_dispatch_tests.rs` (new/load/resume ordering,
+setter readback, replay-failure retention, close and partial-write policy).
+The three-OS workflow selects these explicitly; configured gates are not passing
+CI evidence. `tests/configuration_native.py` and
+`examples/configuration_fixture.rs` are authored native proof infrastructure,
+not a verified native pass. The independent fixture invokes SDK
+`SetThinkingLevel` **action 8**, then native `GetThinkingLevel` readback, rather
+than using ACP's setter to manufacture an external change. Execution requires
+explicit binary/DLL hashes and prebuild source/build provenance in an isolated
+agent-extension directory; CI only parses the harness syntax. No installed DLL
+change, native execution, deployment or cross-platform native qualification is
+implied.
+
+These controls are session-level settings in Zed's ACP thread configuration,
+not Zed's global `agent.default_model` setting. If they do not appear, enable
+`RPI_ACP_DEBUG=1` in Zed's environment and check its agent stderr log for
+`config options unavailable`; the child pure must support
+`get_state`, `get_available_models`, `set_model`, and (optionally)
+`get_available_thinking_levels`; changing thinking requires `set_thinking_level`.
+
+The flag only affects this process and its ACP session children; it does not change
+system environment variables or saved permission settings. It overrides
+`--permission-gate` and `RPI_PERMISSION_GATE=1`. Other extensions' policies and
+ordinary user questions are unchanged. Omitting the flag keeps the default
+approval prompts. This requires a version of `pure-acp` containing the flag.
+
+The standalone bridge accepts `pure-acp-bridge --bypass` (Zed `args: ["--bypass"]`).
+Existing environment configuration remains supported:
+`RPI_ACP_NO_PERMISSION_GATE=1` stops ACP from adding `--permission-gate`, while
+`RPI_PERMISSION_GATE=0` disables environment-based activation of the gate.
+
+## Standalone binary (ACP Registry)
+
+The same ACP server also builds as a standalone binary, `pure-acp-bridge`. Unlike
+the `cdylib` extension it **owns its stdin/stdout natively** — it does not need
+the host `ownsStdio` declaration above, so it runs against a stock `pure`:
+
+```
+Zed  ──ACP (JSON-RPC over stdio)──▶  pure-acp-bridge  ──spawn──▶  pure --mode rpc  (per session)
+```
+
+```bash
+cargo build --release -p pure-acp --bin pure-acp-bridge
+```
+
+It also runs two maintenance commands, which is what an ACP client (or a package
+manager) launches instead of the bare server:
+
+```bash
+pure-acp-bridge --setup          # provider credential login (ACP terminal auth)
+pure-acp-bridge --install-zed    # register agent_servers.pure in Zed
+```
+
+`pure-acp-bridge` locates the agent binary to spawn in this order:
+
+1. `RPI_BIN` (explicit path),
+2. itself, when the process *is* `pure` (the `cdylib`-extension case),
+3. a sibling `pure` / `pure.exe` next to the bridge,
+4. `pure` on `PATH`.
+
+Point Zed straight at the binary if you would rather not load the extension:
+
+```json
+{
+  "agent_servers": {
+    "pure": { "type": "custom", "command": "pure-acp-bridge", "args": [] }
+  }
+}
+```
+
+### Registering with Zed
+
+Zed learns about external agents from the `agent_servers` key in its
+`settings.json`. You never have to edit that by hand:
+
+| Command | Registers |
+| --- | --- |
+| `pure --install-zed` | `pure --acp` — the extension form, no extra binary needed |
+| `pure-acp-bridge --install-zed` | the standalone bridge |
+| `pure --print-zed` / `pure-acp-bridge --print-zed` | nothing — prints the snippet |
+
+Both frontends share one implementation, and it is idempotent, writes
+atomically, keeps a `settings.json.pure-bak` copy the first time it changes the
+file, and **preserves the file's comments and formatting**: Zed's
+`settings.json` is JSONC (it allows `//` comments and trailing commas), so the
+merge splices in one member rather than reparsing and re-emitting the document.
+
+`pure --install-zed` is a one-shot: the extension claims the process stdio like
+`--acp` does, performs the merge, and reports the result through the
+`StdioLifecycle` action so the host exits with `0` (registered) or `1` (could
+not write). The bridge additionally accepts `--settings <FILE>`,
+`--command <FILE>` and `--dry-run`.
+
+Running **`pure --acp` does this automatically**: the extension calls the same
+merge at startup, because `--acp` is exactly the signal that the user wants Zed
+integration. It is a no-op once `agent_servers.pure` exists, so a Zed-launched
+child never writes. Set `RPI_ACP_NO_AUTO_REGISTER_ZED=1` to refuse the write and
+print the snippet instead (useful if your editor config is under version
+control).
+
+### Packaging for the ACP Registry
+
+```bash
+task pack-acp
+```
+
+stages `dist/pure-acp-<platform>/` and builds a **flat** archive
+(`dist/pure-acp-<platform>.zip` on Windows, `.tar.gz` elsewhere) whose root holds
+the binary — matching the registry's `cmd` convention (e.g. `./pure-acp-bridge`).
+It prints the sha256 and a ready-to-paste `distribution.binary` stanza; see
+[`registry/pure-acp/agent.json`](../../registry/pure-acp/agent.json) and
+[`registry/README.md`](../../registry/README.md).
+
+## Authentication
+
+`initialize` advertises one ACP **terminal** auth method, `pure-credentials`,
+whose descriptor is `args: ["--setup"]`. The ACP client runs the same program it
+uses to launch the agent, plus `--setup`, as an interactive terminal process; a
+zero exit status means the credentials are ready and the client reconnects.
+
+`--setup [--provider <id>]` (default provider: `anthropic`) decides the exit code
+by what is actually usable, not by whether a prompt was answered:
+
+| State | Result |
+| --- | --- |
+| Credential already in the environment or `~/.pure` | Prints the source, exits `0` — no prompt |
+| Nothing configured, stdin is a terminal | Runs `pure auth login`, re-checks, exits `0` only if usable |
+| Nothing configured, stdin is a pipe | Exits `3` with the commands that work (never hangs on a prompt) |
+
+The middle row is pure's own login — provider-neutral API key, or a registered
+OAuth provider extension. The last row matters because `pure auth login` prompts
+through the terminal only: running it on a pipe would block until some outer
+timeout killed it, so `--setup` fails fast instead.
+
+Per the ACP auth-methods RFD, the method is advertised **only when the client
+announced it can open a terminal** (`clientCapabilities.auth.terminal`, or the
+flat `clientCapabilities.terminal` + `_meta["terminal-auth"]` shape the ACP
+Registry's verifier sends). Clients that cannot run it get no method, and no
+`authenticate` call is needed either way — a terminal method is out of band.
+
+`packages/pure-acp/tests/registry_auth.py --bridge <binary>` reproduces the ACP
+Registry's handshake (and its pass/fail rule) locally.
+
+## Capabilities and limitations
+
+* **Stable ACP v1** with durable sessions. `loadSession` and session resume are
+  advertised; sessions restore native pure history after reconnection.
+* Client `fs/read_text_file` and `fs/write_text_file` are used only when the
+  client independently negotiates them; see [client text files](#client-text-files).
+  Without either capability, the original local tools remain in use.
+  Client `terminal/*` is not implemented; `bash` still executes natively.
+* Prompt input: `text`, `resource_link`, embedded `resource`, and bounded inline
+  PNG/JPEG images are supported (`embeddedContext: true`, `image: true`).
+  Image prompts require a compatible native profile; audio and other media are
+  not supported. See [inline image prompts](#inline-image-prompts).
+* Updates include `agent_message_chunk`, `agent_thought_chunk`, `tool_call`
+  (with `diff` content for `edit`/`write`), `tool_call_update`, `plan`,
+  `config_option_update` on the live configuration path, and the capability-gated
+  `available_commands_update` described below.
+* **`session/request_permission`** is used: when a child's plugin opens a UI
+  dialog mid-run (e.g. the `pure-permission-gate` extension confirming a `bash`
+  command), `pure-acp` maps it to a `session/request_permission` request and
+  sends the user's choice back to the plugin. The child is launched with
+  `--permission-gate` by default so Zed shows approval prompts; use `--bypass`
+  to disable that gate, or set `RPI_ACP_NO_PERMISSION_GATE=1` to opt out of
+  automatic activation only. Only `confirm`/`selector` dialogs
+  with explicit `purpose: "permission"` and per-option `permission` decisions
+  map to a permission request. Option titles are preserved in the returned
+  answer. Ordinary `ask_user` questions use standard ACP Elicitation when the
+  client advertises form support, with the legacy private extension as a
+  compatibility fallback. Clients that advertise neither capability cancel
+  questions. Closure, timeout, prompt cancellation and disconnect retire pending
+  requests, including when the client never answers.
+* After a successful new/load/resume response, hosts advertising native
+  `compact` receive a standard `available_commands_update` listing only
+  `/compact`. A pure-text prompt beginning with the exact `/compact` token
+  (followed by whitespace or end of input) invokes native compaction; the
+  optional remainder is passed as full multiline custom instructions, with
+  surrounding whitespace trimmed. Mixed resource/media blocks and
+  `/compactness` remain ordinary prompts. Unsupported explicit `/compact`
+  requests return an error; no command is advertised for those hosts.
+  Compaction uses the ordinary run lease, streaming/dialog loop and cancellation
+  path. Acceptance and intermediate events do not finish it: `agent_settled`
+  supplies the optional summary once, with compacted/declined ending normally,
+  aborted cancelled, and failed/unknown outcomes returning an error. If a local
+  cancellation was requested, a failed settlement also ends as cancelled and
+  does not display a failure summary: native can report provider abortion as
+  failed. This still waits for settlement and does not change ordinary prompt
+  failure handling. A declined result without a summary displays
+  `Nothing to compact yet.` Existing global run timeout and shutdown behavior
+  is unchanged; this adds no new deadline.
+  Prompt templates and other slash commands are not advertised or expanded.
+* Authentication is signalled out of band through the terminal method above, so
+  `authenticate` is a tolerant no-op rather than a real handler; pure never asks
+  the client to collect a secret.
+
+## Native message identity
+
+Stable ACP v1 ContentChunk's optional `messageId` is the native transcript
+entry ID, not a provider response ID, tool-call ID, hash, or adapter-generated
+counter. Live assistant text/thinking chunks (including reconciliation of final
+snapshots) carry it only when native advertises the exact
+`ready.semantics.messageIds: "sessionEntryId-v1"` contract. Core rejects missing,
+malformed or changing assistant identity under that contract instead of guessing.
+Legacy hosts without that advertisement retain ID-less live output.
+
+`session/load` uses validated native `entryId` for replayed user text/images and
+assistant text/thinking chunks. Multiple blocks of one message share the same
+ID; distinct native messages remain distinct even if their text is identical.
+This does not add a live user echo, put IDs inside content blocks, or attach
+message identity to tools, plans, configuration/usage updates or compaction
+summaries. `session/resume` still does not replay history. Native owns identity
+and persistence; ACP has no second identity ledger.
+
+## Inline image prompts
+
+An ACP image block uses `{"type":"image","data":"<base64>","mimeType":"image/png"}`
+(or `image/jpeg`). Text, resource conversions and images retain their input
+order. Optional ACP image `uri` metadata is inert: it is never fetched or opened.
+Only canonical standard base64 with exact PNG/JPEG MIME/signature agreement is
+accepted. Data URLs, URL-safe/whitespace base64, APNG, JPEG-XT, audio and other
+formats are not supported. Native additionally validates actual pixel decoding,
+orientation and the selected model's image input support before admission.
+Images needing orientation transforms must be normalized by the client; this
+path does not silently resize, re-encode, drop, or replace images with text.
+
+The ordered native profile permits 1..64 content blocks, at most 4 images,
+1 MiB decoded per image (1,398,104 base64 bytes), 2 MiB decoded images total,
+and 32 KiB aggregate UTF-8 text. The complete serialized native prompt command,
+including correlation ID, escaping and LF, is limited to 3 MiB. Native caps
+images at 2000 pixels per side / 4,000,000 pixels and advertises a 64 MiB
+**best-effort decoder allocation budget**, not a process-wide heap/RSS limit
+(JPEG scratch allocations are not all accounted). Native inbound frames remain
+limited to 1 MiB.
+
+ACP advertises adapter image support at initialize, before creating a native
+session. Each image prompt must still pass extcore's exact v1
+`ready.promptContent` profile gate; old/incompatible native fails before any
+prompt command is written, with no image-to-text fallback. Pure-text/resource
+input retains its existing legacy text conversion and does not acquire these
+new ordered-image budgets. History replay preflights images before emitting
+updates and preserves user image blocks with their native entry identity.
+
+## Client text files
+
+Negotiate independent boolean flags in `initialize`:
+
+```json
+{"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true}}}
+```
+
+Missing flags mean false; malformed flags are rejected. Successful new/load/
+resume configures native while idle, before tools execute. Nonempty selection
+requires native `ready.fileIO` v1 plus commands `configure_file_io` /
+`file_io_response` and events `file_io_request` / `file_io_request_closed`.
+Unsupported native fails explicitly; no requested authority is silently ignored.
+The live session configuration is immutable in core; close/reopen to change it.
+A fresh ACP connection negotiates again, not from transcript metadata.
+
+| Client read | Client write | Built-in `read` | Built-in `write` | Built-in `edit` |
+| --- | --- | --- | --- | --- |
+| false | false | Original host path | Original host path | Original host path |
+| true | false | Client text | Rejected | Rejected |
+| false | true | Original host path | Client text | Rejected |
+| true | true | Client text | Client text | Client full read + client write |
+
+Delegated operations use `fs/read_text_file` / `fs/write_text_file` with the ACP
+`sessionId` and an absolute lexical path resolved from the native session cwd.
+Read requests optionally include one-based `line` and positive `limit`; return
+raw unnumbered text in `{"content":"..."}` with the requested range applied
+once. Edit requests read the complete file, failing rather than truncating, then
+write the full modified text. Write acknowledgement is `{}` (optional `_meta`);
+null is tolerated. Errors are not acknowledgements.
+
+Native owns tool execution, matching/edit rules and permission-before-execution;
+ACP only forwards bounded text requests. Selected client operations do not
+probe/read/write the host source file or create local parent directories, even
+on denial, malformed replies, timeout or disconnect. Client text reads cannot
+fall back to host image-file reads. This is not an OS sandbox: write-only still
+leaves `read` local, and shell commands, extensions, configuration/session storage
+and unrelated tools are outside this delegation boundary. Client buffers are
+not copied into a new bridge-owned filesystem or history database.
+
+At most 64 requests are pending; text is limited to 256 KiB UTF-8, independently
+of the 768 KiB encoded JSON payload limit (escaping can reach that first).
+Native inbound frames are bounded to 4 MiB. Native waits up to 60 seconds;
+core gives handlers 50 seconds including queue time and separately bounds native
+response dispatch to 5 seconds; ACP gives each client operation 45 seconds
+including queued frame writing. These layered deadlines are not a global hard
+shutdown bound. Cancellation, native closure, settlement and disconnect retire
+correlation/owned work; late or duplicate replies cannot revive it. A write may
+already have committed when its acknowledgement is lost: no rollback, CAS,
+automatic retry or replay is promised. Native serializes write/edit mutations
+per router and lexical path, not symlink/file identity or external editors.
+
+## Three-capability validation scope
+
+Normal Cargo tests include the new core identity/prompt/file-I/O tests, ACP
+history/image/filesystem mapping fixtures, and native CLI/tool/harness tests.
+The existing six-package command in `.github/workflows/mcp-checks.yml` selects
+package fixtures; native's workspace CI selects its own tests. The package job
+also retains direct MCP core and stdio/HTTP bridge checks. Neither fixture CI nor
+harness source is evidence of a fresh native pass.
+
+From the package repository, inspect the authored Windows proof harness:
+
+```text
+python -B packages/pure-acp/tests/message_image_fs_native.py --help
+python -B packages/pure-acp/tests/message_image_fs_native.py --bridge <absolute-bridge.exe> --pure <absolute-pure.exe> --bridge-sha <sha256> --native-sha <sha256> --prebuild-inventory <absolute-parent-inventory.json> --diagnostics-dir C:/Users/bigfish/.cargo/target/acp-stage12-01/<new-run-directory>
+```
+
+The parent must freeze complete tracked/untracked Rust, Python, Cargo and
+`.cargo` input hashes for both worktrees **before** either build. The inventory
+also binds successful post-freeze build times, binary paths and hashes; these
+are parent attestations, not cryptographic build proof. The harness neither
+builds nor discovers installed binaries and requires a new target-only evidence
+directory. It uses a local model fixture and real native/bridge processes for
+ordered PNG/JPEG provider payload, live/history ID and client-buffer/disk-
+divergence checks. Inspect retained `results.json`, provenance, wire/provider/
+transcript evidence and cleanup audits before claiming a pass. It does not
+qualify thought streaming, old-native execution, permission denial (the isolated
+fixture disables the gate), cancellation/late-response behavior, Unix native,
+an installed extension, CI success, publication or deployment. Those behaviors
+need their separate fixtures/proofs. No execution result is claimed here.
+
+## Questions and ACP Elicitation
+
+`pure-ask-user` questions use the standard ACP v1 `elicitation/create` form
+when the client advertises `clientCapabilities.elicitation.form`. Current Zed
+clients advertise this capability and render the request as a form. The request
+contains a JSON Schema generated from the native dialog:
+
+```json
+{"jsonrpc":"2.0","id":42,"method":"elicitation/create","params":{
+  "mode":"form","sessionId":"session-uuid","toolCallId":"ask-1",
+  "message":"Which languages?",
+  "requestedSchema":{"type":"object","properties":{
+    "answers":{"type":"array","items":{"type":"string",
+      "enum":["Rust","Python"]}},"minItems":1},
+    "comment":{"type":"string"}},"required":["answers"]}
+}}
+```
+
+The client returns an ACP form response such as:
+
+```json
+{"action":"accept","content":{"answers":["Rust","Python"],"comment":"Both"}}
+```
+
+`pure-acp` validates the returned values against the original native dialog and
+converts them back to `ui_dialog_response`. `decline`, `cancel`, timeout,
+prompt cancellation, and disconnect all cancel the native question. Single
+choice and input questions use an `answer` string; multi-choice questions use
+an `answers` array. `allowComment` is represented by the optional `comment`
+field.
+
+For older clients that explicitly advertise
+`_meta["pi-rust/questions"]: 1`, `pure-acp` retains the private
+`_rpi/request_question` / `_rpi/dialog_closed` compatibility protocol. Standard
+ACP Elicitation is preferred when both capabilities are present. A client that
+advertises neither question capability receives a cancellation because ACP has
+no other safe generic question transport.
+
+`elicitation/create` is an agent-to-client JSON-RPC request; the response uses
+the same request ID. No ACP Rust SDK is required—the existing hand-written
+JSON-RPC dispatcher serializes the standard ACP envelopes directly.
+
+
+## Diagnosing a failed connection
+
+Everything the server says goes to **stderr**, and Zed forwards agent stderr into
+its own log (`agent stderr:` lines in `%LOCALAPPDATA%\Zed\logs\Zed.log`). So
+a client-side "incoming transport closed" always has a matching line:
+
+```
+[pure-acp] server stopping (stdin closed (client hung up), exit 0)
+```
+
+that line names the cause: stdin EOF, a read error, or a host shutdown. One more
+line per session records the child that session spawned — the usual breakage is
+that path naming a deleted binary (a cleaned `target/`):
+
+```
+[pure-acp] session pure-1234-1: child pid 4242 = C:\...\pure.exe --mode rpc
+```
+
+Set `RPI_ACP_DEBUG=1` to also trace the request stream, which shows exactly how
+far a client got before giving up:
+
+```
+[pure-acp] <- initialize 0
+[pure-acp] <- session/new 1
+```
+
+On Windows the variable must be set for Zed's own environment (`setx
+RPI_ACP_DEBUG 1`, then restart Zed); setting it in a terminal only affects runs
+started from that terminal.
+
+If Zed shows only the first tool or reply and never completes the turn, test
+with `pure-goal` loaded as well as ACP. A host runtime-action bridge that blocks
+its Tokio worker can deadlock when goal's `TurnEnd` observer reads the session
+branch. This requires updating the **pure host**, then restarting the ACP process;
+updating only the ACP plugin does not repair the host's scheduler bridge.
+
+The optional native regression uses a local model fixture and no provider calls.
+Set `RPI_TEST_HOST`, `RPI_TEST_PLUGIN` (ACP library), and `RPI_TEST_GOAL_PLUGIN`,
+then run `python -m unittest discover -s packages/pure-acp/tests -p test_native_turns.py -v`.
+It checks consecutive prompts, a real tool execution followed by another reply,
+and native cancellation followed by another prompt. All model traffic stays
+inside the local fixture server.
+
+## Manual smoke test
+```powershell
+$ext = "target\debug"   # dir containing pure_acp.dll / libpure_acp.so
+'{ "jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}} }' |
+  pure --acp --no-session --extensions-dir $ext
+```
+
+The only thing on stdout must be the `initialize` result JSON — no banner, no
+log line (all diagnostics go to stderr).
+
+## License
+
+MIT

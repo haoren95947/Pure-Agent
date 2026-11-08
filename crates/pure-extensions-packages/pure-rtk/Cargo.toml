@@ -1,0 +1,20 @@
+[package]
+name = "pure-rtk"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Compress bash/powershell/grep/find output with the bundled RTK binary"
+
+[lib]
+name = "pure_rtk"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The published rpi-plugin-sdk (=0.3.20) predates the host's appended
+# `register_tool_result` slot, so this bundled extension builds against the
+# host's own SDK. Both are ABI v4 with the same append-only layout the host
+# passes; every other extension keeps the published pin.
+pure-plugin-sdk = { path = "../../pure-engine/pure-plugin-sdk" }
+serde_json = { workspace = true }

@@ -1,0 +1,208 @@
+# Pure Agent workspace — one project, four modules.
+#
+# crates/pure-desktop              desktop shell (egui) + its sans-IO client stack
+# crates/pure-engine               CLI kernel + ACP server/backend (pi-rust + rpi-acp)
+# crates/pure-tui                  terminal UI rendering crate
+# crates/pure-extensions-packages  goal/todo/subagents/codemode/permission-gate
+#                                  extensions + example plugins
+#
+# Upstream baselines live in reference/kage, reference/pi-rust and
+# reference/pi-rust-package.
+#
+# The extensions and the ACP stack build against the PUBLISHED rpi-plugin-sdk,
+# pinned below (=0.3.20, ABI-4 compatible with the vendored pure 0.21.0 host).
+# Keep this pin; do not replace it with the host's local pure-plugin-sdk.
+#
+# Conflicting dependency versions are deliberately kept dual (thiserror
+# 1/2, base64 0.22/0.23, sha2 0.10/0.11, similar 2/3, nix 0.29/0.31,
+# pulldown-cmark 0.12/0.13): the workspace table carries the pi-rust
+# majority flavor, the minority picks declare direct versions.
+# Unifying them is separate follow-up work.
+
+[workspace]
+resolver = "3"
+members = [
+  # Desktop shell and its client stack
+  "crates/pure-desktop/app",
+  "crates/pure-desktop/pure-acp-wire",
+  "crates/pure-desktop/pure-client",
+  "crates/pure-desktop/pure-core",
+  # CLI kernel
+  "crates/pure-engine/pure-telemetry",
+  "crates/pure-engine/pure-ai",
+  "crates/pure-engine/pure-agent",
+  "crates/pure-engine/pure-tools",
+  "crates/pure-engine/pure-durable",
+  "crates/pure-engine/pure-harness",
+  "crates/pure-engine/pure-cli",
+  "crates/pure-engine/pure-runtime",
+  "crates/pure-engine/pure-plugin-sdk",
+  "crates/pure-engine/pure-extensions",
+  # ACP server and dual-role backend
+  "crates/pure-engine/pure-acp",
+  "crates/pure-engine/pure-extcore",
+  "crates/pure-engine/pure-durable-core",
+  "crates/pure-engine/pure-mcp-core",
+  "crates/pure-engine/pure-backend",
+  # Terminal UI
+  "crates/pure-tui",
+  # Extensions and example plugins
+  "crates/pure-extensions-packages/pure-goal",
+  "crates/pure-extensions-packages/pure-todo",
+  "crates/pure-extensions-packages/pure-subagents",
+  "crates/pure-extensions-packages/pure-codemode",
+  "crates/pure-extensions-packages/pure-permission-gate",
+  "crates/pure-extensions-packages/pure-rtk",
+  "crates/pure-extensions-packages/examples/plugin-stub",
+  "crates/pure-extensions-packages/examples/extension-hello",
+]
+
+[workspace.package]
+version = "0.21.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+authors = ["BigFish <fuwei201473@gmail.com>"]
+readme = "README.md"
+# Only the kage-derived desktop crates inherit these two fields.
+keywords = ["agent", "ai", "llm", "lua", "tui"]
+categories = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+# ---- Internal crates: desktop ----
+pure-acp-wire = { path = "crates/pure-desktop/pure-acp-wire", version = "0.6.0" }
+pure-client = { path = "crates/pure-desktop/pure-client", version = "0.6.0" }
+pure-core = { path = "crates/pure-desktop/pure-core", version = "0.6.0" }
+# ---- Internal crates: engine ----
+pure-telemetry = { path = "crates/pure-engine/pure-telemetry", version = "0.21.0" }
+pure-ai = { path = "crates/pure-engine/pure-ai", version = "0.21.0" }
+pure-agent = { path = "crates/pure-engine/pure-agent", version = "0.21.0" }
+pure-tools = { path = "crates/pure-engine/pure-tools", version = "0.21.0" }
+pure-durable = { path = "crates/pure-engine/pure-durable", version = "0.21.0" }
+pure-harness = { path = "crates/pure-engine/pure-harness", version = "0.21.0" }
+pure-runtime = { path = "crates/pure-engine/pure-runtime", version = "0.21.0" }
+pure-plugin-sdk = { path = "crates/pure-engine/pure-plugin-sdk", version = "0.21.0" }
+pure-extensions = { path = "crates/pure-engine/pure-extensions", version = "0.21.0" }
+pure-tui = { path = "crates/pure-tui", version = "0.21.0" }
+
+# ---- Async runtime ----
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "process", "sync", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+futures = "0.3"
+fs2 = "0.4"
+
+# ---- Serialization / schemas ----
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
+yaml_serde = "=0.10.2"
+indexmap = { version = "2", features = ["serde"] }
+schemars = { version = "0.8", features = ["preserve_order"] }
+jsonschema = "0.18"
+
+# ---- HTTP / SSE ----
+# `blocking` serves the ACP stack (pure-acp, pure-mcp-core).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking"] }
+bytes = "1"
+eventsource-stream = "0.2"
+url = "2"
+
+# ---- Errors / logging ----
+# pi-rust majority flavor; the desktop pure-core declares thiserror 2 directly.
+thiserror = "1"
+tracing = "0.1"
+log = "0.4"
+
+# ---- Misc (pi-rust majority flavors) ----
+uuid = { version = "1", features = ["v4", "v7"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+# The desktop app declares base64 0.23 directly.
+base64 = "0.22"
+png = "0.18"
+ciborium = "0.2"
+tempfile = "3"
+regex = "1"
+semver = { version = "1", features = ["serde"] }
+globset = "=0.4.15"
+# The desktop pure-core declares dirs 7 directly.
+dirs = "5"
+rpassword = "7"
+chrono = { version = "0.4", features = ["serde"] }
+
+# ---- Published extension SDK (ACP stack + extensions) ----
+# ABI-4 compatible with the vendored pure 0.21.0 host. Keep this pin;
+# do not replace it with the host's local pure-plugin-sdk.
+rpi-plugin-sdk = { version = "=0.3.20" }
+
+# ---- Desktop-only entries (kage-derived) ----
+hex = "0.4.3"
+sha2 = "0.11.0"
+similar = "3.2.0"
+crossbeam-channel = "0.5.17"
+figment = { version = "0.10.19", features = ["env", "toml"] }
+toml = "1.1.6"
+toml_edit = "0.25.15"
+ulid = { version = "3.0.0", features = ["serde"] }
+compak = { version = "0.2.2", default-features = false }
+syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+libc = "0.2.189"
+nix = { version = "0.31.3", default-features = false, features = ["fs", "poll", "process", "signal", "socket", "user"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["simd"] }
+
+# ---- Desktop UI stack ----
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
+egui = "0.36"
+egui_extras = { version = "0.36", features = ["svg", "image"] }
+egui_commonmark = { version = "0.25", features = ["better_syntax_highlighting"] }
+fontique = { version = "0.9", features = ["std", "system", "fontconfig-dlopen"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "ico"] }
+async-channel = "2.5"
+web-time = "1"
+
+# gpu-allocator 0.28 accepts windows >=0.53,<=0.62 while wgpu-hal 30 pins 0.62
+# and hands D3D12 types across the boundary. Fresh resolutions can settle that
+# wide range on the 0.61 line, which then fails to compile (trait mismatches).
+# The vendored copy pins the edge to windows 0.62; everything else in it is
+# unchanged upstream 0.28.0.
+[patch.crates-io]
+gpu-allocator = { path = "vendor/gpu-allocator" }
+
+# Lints are opt-in: only the kage-derived desktop crates declare# [lints] workspace = true. The FFI crates use unsafe and never inherit
+# this table.
+[workspace.lints.clippy]
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+pedantic = { level = "warn", priority = -1 }
+wildcard_imports = "allow"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+# Shipped-binary profile, after kage/soar. Panics keep unwinding because
+# the plugin host catches a panicking job and keeps its thread alive.
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+
+# Unoptimized egui, epaint and syntect miss a 120 Hz frame budget on a
+# long pure-desktop transcript, so a debug run animated in visible
+# steps. These build optimized once; everything else stays quick to
+# rebuild.
+[profile.dev.package.egui]
+opt-level = 2
+
+[profile.dev.package.epaint]
+opt-level = 2
+
+[profile.dev.package.emath]
+opt-level = 2
+
+[profile.dev.package.syntect]
+opt-level = 2
+
+[profile.dev.package.fancy-regex]
+opt-level = 2

@@ -1,0 +1,17 @@
+[package]
+name = "pure-acp-wire"
+description = "Agent Client Protocol wire schema for pure, shared by native and wasm clients."
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.89"
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

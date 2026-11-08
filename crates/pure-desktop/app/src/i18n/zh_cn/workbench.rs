@@ -1,0 +1,72 @@
+//! Chinese strings for `workbench`.
+
+pub(super) static ENTRIES: &[(&str, &str)] = &[
+    (
+        "Start a session to see its changes, agents and output here.",
+        "开始一个会话后，这里会显示它的变更、智能体和输出。",
+    ),
+    ("Changes", "变更"),
+    ("Files", "文件"),
+    ("Agents", "智能体"),
+    ("Terminal", "终端"),
+    ("Browser", "浏览器"),
+    ("{} live", "{} 个运行中"),
+    ("Close workbench", "关闭工作台"),
+    ("Close workbench (Ctrl B)", "关闭工作台 (Ctrl B)"),
+    (
+        "No file changes in this session yet.",
+        "本次会话暂无文件变更。",
+    ),
+    ("{} FILE CHANGED", "{} 个文件已变更"),
+    ("{} FILES CHANGED", "{} 个文件已变更"),
+    ("Open file", "打开文件"),
+    (
+        "Listing the session workdir\u{2026}",
+        "正在列出会话工作目录\u{2026}",
+    ),
+    ("Mention in composer", "在输入框中提及"),
+    ("Binary file; not shown.", "二进制文件，不予显示。"),
+    (
+        "Truncated: the file is longer than the preview.",
+        "已截断：文件超出预览长度。",
+    ),
+    ("Agent not found.", "未找到该智能体。"),
+    ("Back to agents", "返回智能体列表"),
+    ("Stop", "停止"),
+    ("swarm #{}", "集群 #{}"),
+    ("{} tok", "{} Token"),
+    ("{} tool calls", "{} 次工具调用"),
+    ("item: {}", "条目：{}"),
+    ("AGENTS", "智能体"),
+    ("All", "全部"),
+    ("Running", "运行中"),
+    ("Done", "已完成"),
+    ("Background", "后台"),
+    (
+        "No agents yet. Subagents and swarm workers show up here while they run.",
+        "暂无智能体。子代理与集群成员会在运行时显示在这里。",
+    ),
+    ("Subagents", "子代理"),
+    ("Swarm", "集群"),
+    (
+        "No agents match this filter.",
+        "没有符合该筛选条件的智能体。",
+    ),
+    ("bg", "后台"),
+    (
+        "Shell commands and their output collect here.",
+        "Shell 命令及其输出会汇总在这里。",
+    ),
+    ("exit {}", "退出码 {}"),
+    ("\u{2026} {} earlier line", "\u{2026} 之前还有 {} 行"),
+    ("\u{2026} {} earlier lines", "\u{2026} 之前还有 {} 行"),
+    ("(no output)", "（无输出）"),
+    (
+        "Pages the agent fetches open here as reader text. No scripts, no remote images.",
+        "智能体抓取的网页会以阅读器文本显示在这里。不加载脚本和远程图片。",
+    ),
+    (
+        "{} fetched \u{b7} reader text only, remote content never loads",
+        "已抓取 {} \u{b7} 仅阅读器文本，远程内容不会加载",
+    ),
+];

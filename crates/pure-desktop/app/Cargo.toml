@@ -1,0 +1,152 @@
+[package]
+name = "pure-desktop-app"
+description = "The pure desktop and browser client."
+version = "0.6.0"
+edition = "2024"
+# Newer than the CLI's floor: the egui stack needs 1.95. The msrv
+# desktop leg in CI enforces it.
+rust-version = "1.95"
+license.workspace = true
+readme.workspace = true
+keywords = ["agent", "ai", "llm", "desktop", "egui"]
+categories = ["development-tools", "gui"]
+# The probes, their snapshots and the web page are not needed to build.
+include = ["/src", "/assets", "/build.rs"]
+
+[lib]
+# Kept from the pre-rename package name: 34 probe/test files import
+# `pure_desktop`, and the wasm bundle is named pure_desktop.wasm.
+name = "pure_desktop"
+# cdylib so the wasm bundle carries the exported web entry; rlib for the
+# native binary and tests.
+crate-type = ["cdylib", "rlib"]
+
+# The native binary has a `main`; the browser build is the cdylib the
+# wasm-bindgen CLI turns into `pure_desktop.wasm` (T08.2.1), and a
+# wasm bin target has no entry. Declaring the bin under a native-only
+# feature keeps `cargo build --target wasm32-unknown-unknown` from
+# trying to link one.
+[[bin]]
+name = "pure-agent"
+path = "src/main.rs"
+required-features = ["native-bin"]
+
+[dependencies]
+# The egui stack. glow renders; wgpu stays available as a fallback
+# feature (decision D1). default_fonts keeps egui's Latin faces; the
+# CJK coverage arrives with E05's system font discovery.
+eframe = { version = "0.36", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+base64 = "0.23"
+egui = "0.36"
+egui_extras = { version = "0.36", features = ["svg", "image"] }
+egui_commonmark = { version = "0.25", features = ["better_syntax_highlighting"] }
+# The top-level block split the transcript's markdown renders by; the
+# same parser and version egui_commonmark reads with.
+pulldown-cmark = { version = "0.13", default-features = false }
+egui_virtual_list = "0.12"
+hex.workspace = true
+sha2.workspace = true
+# Decodes the images a model produces in the transcript, through the
+# egui_extras image loader, on native and web alike.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+# Syntax highlighting for the transcript's code blocks; the
+# `default-fancy` flavor keeps the fancy regex engine.
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+pure-client.workspace = true
+# The catalog's origin, so a provider's logo is read from the same place
+# the catalog is rather than from a URL repeated here.
+pure-core.workspace = true
+async-channel = "2.5"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+# `std::time::Instant::now` panics in the browser; this one reads
+# `performance.now` there and is std on native.
+web-time = "1"
+# Local wall-clock labels.
+chrono = "0.4"
+# The config.toml preview the settings forms show.
+toml = "1"
+
+[features]
+# The native executable; the browser build never links a binary.
+default = ["native-bin"]
+native-bin = []
+
+[build-dependencies]
+# The Windows executable icon embed, gated by `build.rs` to the
+# windows target.
+winresource = "0.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# System font discovery for the CJK fallback: fontconfig on Linux
+# through its dlopen mode, so the binary never hard-links the C
+# library, CoreText on macOS and DirectWrite on Windows.
+fontique = { version = "0.9", default-features = false, features = [
+    "std",
+    "system",
+    "fontconfig-dlopen",
+] }
+# Plain WebSocket client, no TLS: pure serves loopback ws:// only.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+# Decodes the embedded brand art for the window icon, and the favicons
+# that stand in for provider logos pure-models lacks. Native only.
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+
+# Fetches the release list and the engine binary for the update
+# check and the setup screen download; rustls, so no system OpenSSL.
+ureq = "2.10"
+# Unpacks the release archives (tar.xz, or zip on Windows) in the
+# setup screen's downloader and the updater.
+compak = { workspace = true, features = ["tar", "xz", "zip"] }
+# The native file dialog the setup screen's Browse opens, through the
+# XDG portal. Not on wasm: the browser build never runs a local binary.
+rfd = "0.17"
+# Watches for the error `rfd` logs when no folder picker answers.
+log = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Reads the desktop's light or dark preference from the settings
+# portal, which winit does not report on Linux. Already in the tree
+# through accesskit, with the same executor.
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `rand` reaches for `getrandom`, which needs the `wasm_js` feature to
+# draw from the browser's crypto. Declared here so the feature
+# unifies across the whole wasm graph.
+getrandom = { version = "0.4.3", features = ["wasm_js"] }
+# Exact versions so the wasm-bindgen CLI (0.2.129 installed) stays in
+# sync with the crate, same rule as the workspace lock.
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "=0.4.79"
+# `Date.now`, the browser clock behind `clock::unix_seconds`.
+js-sys = "=0.3.106"
+web-sys = { version = "=0.3.106", features = [
+    "BinaryType",
+    "CssStyleDeclaration",
+    "Document",
+    "Element",
+    "HtmlAudioElement",
+    "HtmlCanvasElement",
+    "HtmlMediaElement",
+    "Location",
+    "MessageEvent",
+    "Node",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "Storage",
+    "WebSocket",
+    "Window",
+] }
+
+[dev-dependencies]
+# The headless harness the E01 theme and icon probes render through.
+egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }

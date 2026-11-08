@@ -1,0 +1,36 @@
+[package]
+name = "pure-core"
+description = "Shared types, events, and errors for the pure coding agent."
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.89"
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+crossbeam-channel.workspace = true
+dirs = "7"
+figment.workspace = true
+globset.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+similar.workspace = true
+thiserror = "2"
+toml.workspace = true
+toml_edit.workspace = true
+ulid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+nix.workspace = true
+
+[dev-dependencies]
+figment = { workspace = true, features = ["test"] }
+tempfile.workspace = true

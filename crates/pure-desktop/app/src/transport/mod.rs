@@ -1,0 +1,233 @@
+//! The transports that carry ACP frames between the shell and an
+//! engine.
+//!
+//! Every transport implements [`Transport`]: it connects in the
+//! background, hands incoming [`Frame`]s to the shell through an
+//! [`async_channel`], and accepts outgoing frames from anywhere. The
+//! shell never sees threads, sockets or subprocesses, only events.
+//!
+//! Four implementations live here: [`stdio`](self::stdio) spawns
+//! `pure rpc` as a child, [`ws`](self::ws) dials `pure serve` over a
+//! WebSocket and reconnects with backoff, [`web`](self::web) does the
+//! same through a browser `WebSocket` on wasm targets, and
+//! [`replay`](self::replay) plays a recorded golden transcript so the
+//! shell is fully usable with no engine on the machine.
+//!
+//! Panic policy for the implementations: lock unwraps and serialize
+//! expects stay, because a poisoned lock or a failing serialize means
+//! a bug elsewhere and aborting with it is accepted; thread and child
+//! spawn failures report [`State::Refused`] instead, so a constrained
+//! host shows why nothing came up rather than a dead window.
+
+pub mod replay;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod stdio;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ws;
+
+use std::time::Duration;
+
+use pure_client::Frame;
+
+/// One message a transport hands the shell.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Event {
+    /// A frame arrived from the engine, ready for
+    /// [`pure_client::Client::handle`].
+    Frame(Frame),
+    /// The connect state moved.
+    State(State),
+}
+
+/// The sender half of a transport's event stream.
+pub type EventSender = async_channel::Sender<Event>;
+
+/// Where a connection stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum State {
+    /// Dialing or spawning, nothing heard yet.
+    Connecting,
+    /// The link is up.
+    Connected,
+    /// The other side said no and will keep saying no: a bad token,
+    /// a wrong endpoint. Retrying is pointless until something the
+    /// user changes is different.
+    Refused(String),
+    /// The link dropped and a retry is scheduled.
+    Reconnecting {
+        /// Which retry this is, counting from one per lost link.
+        attempt: u32,
+        /// How long the transport waits before the attempt.
+        delay: Duration,
+    },
+    /// Shut down for good.
+    Closed,
+}
+
+impl State {
+    /// The short form a status bar shows.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Connecting => "connecting".to_owned(),
+            Self::Connected => "connected".to_owned(),
+            Self::Refused(why) => format!("refused: {why}"),
+            Self::Reconnecting { attempt, delay } => {
+                format!("reconnecting, attempt {} in {}s", attempt, delay.as_secs())
+            }
+            Self::Closed => "closed".to_owned(),
+        }
+    }
+
+    /// Whether frames can flow: only a live link carries them.
+    #[must_use]
+    pub fn is_connected(&self) -> bool {
+        matches!(self, Self::Connected)
+    }
+}
+
+/// What a transport connects to, as the sidebar footer names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    /// The engine command on the other end: `pure rpc` or `pure serve`.
+    pub name: &'static str,
+    /// Where it runs: `stdio` and `local` joined by a middle dot, or
+    /// the endpoint's host and path.
+    pub detail: String,
+}
+
+impl Link {
+    /// The link to a `pure serve` endpoint at `url`, shown without its
+    /// scheme.
+    #[must_use]
+    pub fn serve(url: &str) -> Self {
+        let detail = url.split_once("://").map_or(url, |(_, rest)| rest);
+        Self {
+            name: "pure serve",
+            detail: detail.to_owned(),
+        }
+    }
+}
+
+/// A transport behind the shell.
+///
+/// The shell starts it once, then only calls [`Transport::send`] and
+/// drops it. Dropping must release everything the transport holds:
+/// children die, sockets close, threads end.
+pub trait Transport: 'static {
+    /// Begins connecting and reports progress into `events`. Called
+    /// once, before any [`Transport::send`].
+    fn start(&mut self, events: EventSender);
+
+    /// Hands one outgoing frame to the engine. A frame that arrives
+    /// while no link is live waits in a bounded backlog and goes out
+    /// on the next link; a backlog that overflows drops its oldest
+    /// frame and says so. [`stdio`](self::stdio) never relinks, so it
+    /// reports a dead link as [`State::Closed`] instead of holding
+    /// the frame.
+    fn send(&self, frame: Frame);
+
+    /// Closes the link for good: no more retries, no more events
+    /// after [`State::Closed`].
+    fn close(&self);
+
+    /// What the transport connects to.
+    fn link(&self) -> Link;
+
+    /// The engine's connection id for diagnostics, when the transport
+    /// learned one.
+    fn connection_id(&self) -> Option<String> {
+        None
+    }
+}
+
+/// The reconnect delay ladder: 1s doubling to a 30s cap.
+#[derive(Debug, Clone)]
+pub struct Backoff {
+    attempt: u32,
+}
+
+impl Backoff {
+    /// The delay before the first retry.
+    pub const BASE: Duration = Duration::from_secs(1);
+    /// The delay every retry after the fifth waits.
+    pub const CAP: Duration = Duration::from_secs(30);
+
+    /// A ladder ready for the first retry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { attempt: 0 }
+    }
+
+    /// The delay before the next retry, one rung further up.
+    pub fn retry_delay(&mut self) -> Duration {
+        let shift = self.attempt.min(5);
+        self.attempt += 1;
+        Self::BASE.saturating_mul(1 << shift).min(Self::CAP)
+    }
+
+    /// Rewinds to the first rung, after a link came back.
+    pub fn reset(&mut self) {
+        self.attempt = 0;
+    }
+}
+
+impl Default for Backoff {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{Backoff, State};
+
+    #[test]
+    fn backoff_doubles_from_one_second_to_the_cap() {
+        let mut backoff = Backoff::new();
+        let delays: Vec<u64> = (0..8).map(|_| backoff.retry_delay().as_secs()).collect();
+        assert_eq!(delays, vec![1, 2, 4, 8, 16, 30, 30, 30]);
+    }
+
+    #[test]
+    fn backoff_resets_after_a_link_returns() {
+        let mut backoff = Backoff::new();
+        for _ in 0..4 {
+            backoff.retry_delay();
+        }
+        backoff.reset();
+        assert_eq!(backoff.retry_delay(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn state_labels_read_like_a_status_bar() {
+        assert_eq!(State::Connecting.label(), "connecting");
+        assert_eq!(State::Connected.label(), "connected");
+        assert_eq!(
+            State::Refused("bad token".into()).label(),
+            "refused: bad token"
+        );
+        assert_eq!(
+            State::Reconnecting {
+                attempt: 3,
+                delay: Duration::from_secs(4)
+            }
+            .label(),
+            "reconnecting, attempt 3 in 4s"
+        );
+        assert_eq!(State::Closed.label(), "closed");
+        assert!(State::Connected.is_connected());
+        assert!(
+            !State::Reconnecting {
+                attempt: 1,
+                delay: Duration::from_secs(1)
+            }
+            .is_connected()
+        );
+    }
+}

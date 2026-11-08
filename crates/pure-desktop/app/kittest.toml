@@ -1,0 +1,47 @@
+# egui_kittest configuration for the pure probe suite.
+#
+# The suite renders the themed shell through the wgpu backend and
+# compares it against the baselines in tests/snapshots/. Font
+# rasterization, GPU rounding and the system font fallback differ per
+# platform, so the per-OS thresholds below allow a few failing pixels
+# where the rendering is legitimately not bit-identical, while the
+# per-pixel `threshold` stays tight enough that a real layout change
+# still fails.
+#
+# UPDATE_SNAPSHOTS workflow: run `UPDATE_SNAPSHOTS=1 cargo test -p
+# pure-desktop --test parity_rig`, review the new PNGs in
+# tests/snapshots/ with `git diff`, and commit them together with the
+# change that moved them. Never update a baseline to make a failing
+# test pass without reading the diff: the parity rig exists so a
+# visual regression cannot slip through a green run.
+#
+# Per-platform notes:
+# - Linux: the baselines are recorded on a Wayland session with
+#   lavapipe/llvmpipe software rendering, which rounds glyph advances
+#   differently from a hardware GL driver; a small pixel count is
+#   allowed for that rounding.
+# - macOS: CoreText metrics differ slightly from FreeType, so a few
+#   hundred pixels of antialiasing may differ per frame.
+# - Windows: DirectWrite and ClearType make the largest legitimate
+#   difference, hence the widest allowance.
+
+output_path = "tests/snapshots"
+
+# The default per-pixel YIQ tolerance. Tight enough that a moved
+# widget fails; the per-OS allowances below handle rasterization only.
+threshold = 0.6
+
+# The default number of pixels that may fail before the test fails.
+max_failed_pixels = 0
+
+[linux]
+threshold = 0.6
+max_failed_pixels = 600
+
+[mac]
+threshold = 0.6
+max_failed_pixels = 400
+
+[windows]
+threshold = 0.6
+max_failed_pixels = 1200

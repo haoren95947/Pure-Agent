@@ -1,0 +1,33 @@
+[package]
+name = "pure-extcore"
+version = "0.2.12"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Shared native RPC, session and workspace services for pure extensions"
+readme = "README.md"
+keywords = ["pure", "agent", "rpc", "session", "workspace"]
+categories = ["api-bindings", "command-line-utilities", "development-tools"]
+
+[features]
+test-support = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json.workspace = true
+pure-durable-core = { path = "../pure-durable-core", version = "0.2.0" }
+pure-mcp-core = { path = "../pure-mcp-core", version = "0.1.1" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "process", "io-util", "net", "fs", "signal"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+futures-util = "0.3"
+base64 = "0.22"
+fs2 = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
