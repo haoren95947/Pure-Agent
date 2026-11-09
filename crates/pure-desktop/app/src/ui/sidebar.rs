@@ -95,8 +95,8 @@ pub fn project_name(cwd: Option<&str>) -> String {
     let Some(cwd) = cwd else {
         return "local".to_owned();
     };
-    let trimmed = cwd.trim_end_matches('/');
-    let name = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    let trimmed = cwd.trim_end_matches(['/', '\\']);
+    let name = trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed);
     if name.is_empty() {
         "local".to_owned()
     } else {
@@ -399,6 +399,14 @@ pub enum SidebarEvent {
     },
     /// Start renaming the session from its row's menu.
     RenameSession(String),
+    /// Delete every conversation of the workspace in `dir`: its
+    /// grouping row disappears once they are gone.
+    DeleteWorkspace {
+        /// The directory the grouped sessions work in.
+        dir: String,
+        /// The sessions the group holds.
+        sessions: Vec<String>,
+    },
 }
 
 /// The sidebar's state: the search query and the collapsed projects.
@@ -742,6 +750,7 @@ fn project_row(
 ) {
     let open = !sidebar.collapsed(project);
     let dir = members.iter().find_map(|item| item.dir.clone());
+    let sessions: Vec<String> = members.iter().map(|item| item.id.clone()).collect();
     ui.add_space(4.0);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
@@ -761,8 +770,24 @@ fn project_row(
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(crate::i18n::t("New session"))
     });
+    // The trash control deletes the whole group. Its lane stays
+    // reserved so the name never shifts when the row is hovered.
+    let trash = egui::Rect::from_min_size(
+        egui::pos2(plus.left() - 4.0 - 22.0, rect.center().y - 11.0),
+        egui::vec2(22.0, 22.0),
+    );
+    let trash_response = (!sessions.is_empty()).then(|| {
+        ui.interact(
+            trash,
+            ui.id().with(("project-delete", project)),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(crate::i18n::t("Delete this workspace's conversations"))
+    });
     let plus_hovered = plus_response.as_ref().is_some_and(egui::Response::hovered);
-    let hovered = response.hovered() || plus_hovered;
+    let trash_hovered = trash_response.as_ref().is_some_and(egui::Response::hovered);
+    let hovered = response.hovered() || plus_hovered || trash_hovered;
     if hovered {
         ui.painter()
             .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.hover);
@@ -780,7 +805,7 @@ fn project_row(
     };
     crate::icons::themed_image(glyph, 14.0, palette.muted).paint_snapped(ui, folder);
     let mut right = if dir.is_some() {
-        plus.left() - 8.0
+        trash.left() - 8.0
     } else {
         rect.right() - 8.0
     };
@@ -825,9 +850,40 @@ fn project_row(
             egui::Rect::from_center_size(plus.center(), egui::vec2(13.0, 13.0)),
         );
     }
+    if trash_response.is_some() {
+        if trash_hovered {
+            ui.painter().rect_filled(
+                trash,
+                egui::CornerRadius::same(R_MD as u8),
+                palette.fill_hover,
+            );
+        }
+        crate::icons::themed_image(
+            crate::icons::Icon::Delete,
+            13.0,
+            if trash_hovered {
+                palette.danger
+            } else {
+                palette.faint
+            },
+        )
+        .paint_snapped(
+            ui,
+            egui::Rect::from_center_size(trash.center(), egui::vec2(13.0, 13.0)),
+        );
+    }
     match (plus_response, dir) {
         (Some(add), Some(dir)) if add.clicked() => {
             events.push(SidebarEvent::NewSession(Some(dir)));
+        }
+        _ if trash_response.as_ref().is_some_and(egui::Response::clicked) => {
+            events.push(SidebarEvent::DeleteWorkspace {
+                dir: members
+                    .iter()
+                    .find_map(|item| item.dir.clone())
+                    .unwrap_or_default(),
+                sessions,
+            });
         }
         _ if response.clicked() => sidebar.toggle_project(project),
         _ => {}
@@ -1253,8 +1309,17 @@ mod tests {
     fn project_names_take_the_last_path_segment() {
         assert_eq!(project_name(Some("/home/u/dev/pure")), "pure");
         assert_eq!(project_name(Some("/home/u/dev/pure/")), "pure");
+        assert_eq!(
+            project_name(Some(r"D:\Work\Code\Rust\kiki-agent")),
+            "kiki-agent"
+        );
+        assert_eq!(
+            project_name(Some(r"D:\Work\Code\Rust\kiki-agent\dist\")),
+            "dist"
+        );
         assert_eq!(project_name(None), "local");
         assert_eq!(project_name(Some("/")), "local");
+        assert_eq!(project_name(Some(r"D:\")), "D:");
     }
 
     #[test]

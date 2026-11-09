@@ -84,6 +84,19 @@ pub(super) static ENTRIES: &[(&str, &str)] = &[
     ("Set a goal", "设定目标"),
     ("Enable swarm mode?", "启用集群模式？"),
     ("Rewind to this message?", "回退到这条消息？"),
+    ("Delete workspace", "删除工作区"),
+    ("Delete", "删除"),
+    (
+        "Delete this workspace's conversations",
+        "删除该工作区的全部会话",
+    ),
+    ("conversation", "个会话"),
+    ("conversations", "个会话"),
+    (
+        "Delete {} in {}? Their transcripts are removed from disk, and this cannot be undone.",
+        "删除 {}（{}）？会话记录将从磁盘移除，且无法撤销。",
+    ),
+    ("Deleted {} conversations in {}", "已删除 {} 个会话（{}）"),
     (
         "The agent keeps working until the goal is met, checking it after each turn.",
         "智能体会持续工作直到目标达成，并在每轮结束后检查。",

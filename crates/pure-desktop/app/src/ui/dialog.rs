@@ -23,7 +23,7 @@ use crate::ui::settings_config::{BtnTone, btn_sm_at};
 use crate::ui::workbench::{ChangeEntry, change_entries, session_changes};
 
 /// The dialogs the shell can show.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DialogKind {
     /// Set or clear the session goal.
     Goal,
@@ -33,6 +33,13 @@ pub enum DialogKind {
     Rewind(usize),
     /// Pick the directory the next session opens in, by path.
     OpenFolder,
+    /// Delete every conversation of the workspace in this directory.
+    DeleteWorkspace {
+        /// The directory the group works in.
+        dir: String,
+        /// The sessions the group holds.
+        sessions: Vec<String>,
+    },
 }
 
 /// What a rewind to before a prompt drops from the session.
@@ -146,6 +153,13 @@ pub enum DialogEvent {
     /// List the folders inside this path, or the home folder when
     /// `None`.
     Browse(Option<String>),
+    /// Delete the workspace's conversations.
+    DeleteWorkspace {
+        /// The directory the group works in.
+        dir: String,
+        /// The sessions the group holds.
+        sessions: Vec<String>,
+    },
 }
 
 /// The dialog layer's state: which dialog is open, its field text and
@@ -183,8 +197,8 @@ impl Dialogs {
 
     /// The dialog that shows.
     #[must_use]
-    pub const fn open(&self) -> Option<DialogKind> {
-        self.open
+    pub fn open(&self) -> Option<DialogKind> {
+        self.open.clone()
     }
 
     /// Shows `kind`. Swarm mode turns on without the confirmation when
@@ -194,7 +208,7 @@ impl Dialogs {
         if kind == DialogKind::ConfirmSwarm && !store.prefs().confirm_swarm {
             return vec![DialogEvent::EnableSwarm(None)];
         }
-        self.open = Some(kind);
+        self.open = Some(kind.clone());
         self.focus = true;
         match kind {
             DialogKind::Goal => {
@@ -213,7 +227,9 @@ impl Dialogs {
                 let path = store.session_dir().map(str::to_owned);
                 self.browsing = Some(store.ask_folders(path.as_deref()));
             }
-            DialogKind::ConfirmSwarm | DialogKind::Rewind(_) => {}
+            DialogKind::ConfirmSwarm
+            | DialogKind::Rewind(_)
+            | DialogKind::DeleteWorkspace { .. } => {}
         }
         Vec::new()
     }
@@ -251,7 +267,7 @@ impl Dialogs {
     /// for. `born` is the shell's clock, so a field's caret keeps
     /// blinking across frames.
     pub fn show(&mut self, ui: &mut egui::Ui, store: &Store, born: Instant) -> Vec<DialogEvent> {
-        let Some(kind) = self.open else {
+        let Some(kind) = self.open.clone() else {
             return Vec::new();
         };
         let palette = Palette::active_of(ui.ctx());
@@ -279,6 +295,7 @@ impl Dialogs {
                     DialogKind::Goal | DialogKind::OpenFolder => 480.0,
                     DialogKind::ConfirmSwarm => 460.0,
                     DialogKind::Rewind(_) => 560.0,
+                    DialogKind::DeleteWorkspace { .. } => 460.0,
                 };
                 // The card centers in the window, at the height it drew
                 // last frame.
@@ -298,6 +315,7 @@ impl Dialogs {
                         (palette.accent, palette.accent_soft)
                     }
                     DialogKind::ConfirmSwarm => (palette.done, palette.done_soft),
+                    DialogKind::DeleteWorkspace { .. } => (palette.danger, palette.danger_soft),
                 };
                 let (title, icon) = match kind {
                     DialogKind::Goal => (crate::i18n::t("Set a goal"), crate::icons::Icon::Target),
@@ -312,6 +330,10 @@ impl Dialogs {
                     DialogKind::OpenFolder => (
                         crate::i18n::t("Open folder"),
                         crate::icons::Icon::FolderOpen,
+                    ),
+                    DialogKind::DeleteWorkspace { .. } => (
+                        crate::i18n::t("Delete workspace"),
+                        crate::icons::Icon::Delete,
                     ),
                 };
                 // The card takes its own clicks before its contents draw
@@ -412,6 +434,54 @@ impl Dialogs {
             DialogKind::ConfirmSwarm => self.swarm_body(ui, store, palette, ask),
             DialogKind::Rewind(prompt) => self.rewind_body(ui, store, prompt, palette, ask),
             DialogKind::OpenFolder => self.folder_body(ui, palette, ask),
+            DialogKind::DeleteWorkspace { dir, sessions } => {
+                self.delete_workspace_body(ui, &dir, &sessions, palette, ask);
+            }
+        }
+    }
+
+    /// The delete-workspace confirmation: what goes, and the two
+    /// answers.
+    fn delete_workspace_body(
+        &self,
+        ui: &mut egui::Ui,
+        dir: &str,
+        sessions: &[String],
+        palette: &Palette,
+        ask: &mut Ask,
+    ) {
+        let count = counted(
+            sessions.len(),
+            crate::i18n::t("conversation"),
+            crate::i18n::t("conversations"),
+        );
+        ui.label(
+            egui::RichText::new(crate::tr!(
+                "Delete {} in {}? Their transcripts are removed from disk, and this cannot be undone.",
+                count,
+                dir
+            ))
+            .size(FS_SM)
+            .family(crate::theme::prose_family(ui.ctx()))
+            .color(palette.muted),
+        );
+        ui.add_space(FOOT_GAP);
+        footer(
+            ui,
+            palette,
+            &[
+                (crate::i18n::t("Cancel"), false),
+                (crate::i18n::t("Delete"), true),
+            ],
+            &mut ask.saved,
+            &mut ask.cancelled,
+        );
+        if ask.saved {
+            ask.events.push(DialogEvent::DeleteWorkspace {
+                dir: dir.to_owned(),
+                sessions: sessions.to_vec(),
+            });
+            ask.close = true;
         }
     }
 

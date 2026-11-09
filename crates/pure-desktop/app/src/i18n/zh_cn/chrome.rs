@@ -13,6 +13,10 @@ pub(super) static ENTRIES: &[(&str, &str)] = &[
     ("Show as one list", "显示为一个列表"),
     ("Group by project", "按项目分组"),
     ("No conversations yet", "暂无会话"),
+    (
+        "Delete this workspace's conversations",
+        "删除该工作区的全部会话",
+    ),
     ("untitled session", "未命名会话"),
     ("Approve", "批准"),
     ("Answer", "回答"),

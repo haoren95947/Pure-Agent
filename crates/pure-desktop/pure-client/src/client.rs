@@ -14,13 +14,13 @@ use serde_json::Value;
 
 use pure_acp_wire::{
     CancelNotification, ClientCapabilities, CloseSessionRequest, CompactionPhase, ConfigGetRequest,
-    ContentBlock, FsOp, FsRequest, Implementation, InitializeRequest, PureMeta,
-    ListSessionsRequest, LoadSessionRequest, McpServer, ModelsResponse, NewSessionMeta,
-    NewSessionRequest, OptionSetRequest, OptionsResponse, PROTOCOL_VERSION, PermissionOptionKind,
-    PermissionOutcome, PlanReview, PromptDelivery, PromptRef, PromptRequest, PromptResponse,
-    QuestionMeta, RequestMeta, RequestPermissionRequest, RequestPermissionResult,
-    ResumeSessionRequest, SelectedOption, SessionExportResponse, SessionForkRequest,
-    SessionForkResponse, SessionNotification, SessionRenameRequest, SessionRequest, SessionUpdate,
+    ContentBlock, FsOp, FsRequest, Implementation, InitializeRequest, ListSessionsRequest,
+    LoadSessionRequest, McpServer, ModelsResponse, NewSessionMeta, NewSessionRequest,
+    OptionSetRequest, OptionsResponse, PROTOCOL_VERSION, PermissionOptionKind, PermissionOutcome,
+    PlanReview, PromptDelivery, PromptRef, PromptRequest, PromptResponse, PureMeta, QuestionMeta,
+    RequestMeta, RequestPermissionRequest, RequestPermissionResult, ResumeSessionRequest,
+    SelectedOption, SessionExportResponse, SessionForkRequest, SessionForkResponse,
+    SessionNotification, SessionRenameRequest, SessionRequest, SessionUpdate,
     SetSessionConfigOptionRequest, SwarmResumeRequest, UiCommandRequest, UiDialogRequest,
     UiKeymapRequest, UiSnapshot, UiUpdate,
 };
@@ -149,6 +149,9 @@ enum Pending {
         session_id: String,
     },
     Export {
+        session_id: String,
+    },
+    Delete {
         session_id: String,
     },
     Compact {
@@ -909,6 +912,20 @@ impl Client {
         )
     }
 
+    /// Deletes the recorded `session_id` and its transcript. The row
+    /// leaves the sidebar once the engine answers.
+    pub fn delete_session(&mut self, session_id: &str) -> u64 {
+        self.request(
+            "session/delete",
+            params(&SessionRequest {
+                session_id: session_id.to_owned(),
+            }),
+            Pending::Delete {
+                session_id: session_id.to_owned(),
+            },
+        )
+    }
+
     /// Asks the agent to summarize the older turns of `session_id` now.
     /// The result arrives as the session's compaction update.
     pub fn compact_session(&mut self, session_id: &str) -> u64 {
@@ -1395,6 +1412,7 @@ impl Client {
                     }],
                 }
             }
+            Pending::Delete { session_id } => self.forget_deleted(session_id),
             Pending::Fs { session_id } => {
                 match answer::<pure_acp_wire::FsResult>(id, result, "_pure/fs result") {
                     Err(failed) => failed,
@@ -1409,6 +1427,15 @@ impl Client {
                 Self::land_ui_output(id, result, cwd)
             }
         }
+    }
+
+    /// Forgets a session the agent deleted and reports the list change.
+    fn forget_deleted(&mut self, session_id: String) -> Vec<Change> {
+        self.state.sessions.remove(&session_id);
+        self.state
+            .directory
+            .retain(|info| info.session_id != session_id);
+        vec![Change::Session { id: session_id }]
     }
 
     /// Lands the `_pure/ui/attach` answer: the snapshot becomes the

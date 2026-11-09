@@ -1289,6 +1289,13 @@ impl ShellApp {
                     let title = self.shell.store.display_title(&id);
                     crate::ui::topbar::begin_rename(&self.ctx, title);
                 }
+                crate::ui::sidebar::SidebarEvent::DeleteWorkspace { dir, sessions } => {
+                    let events = self.shell.dialogs.show_dialog(
+                        crate::ui::dialog::DialogKind::DeleteWorkspace { dir, sessions },
+                        &mut self.shell.store,
+                    );
+                    self.carry_dialog(events);
+                }
             }
         }
     }
@@ -1306,6 +1313,17 @@ impl ShellApp {
                         let _ = self.shell.store.set_permission(permission);
                     }
                     let _ = self.shell.store.set_option("swarm", "on");
+                }
+                crate::ui::dialog::DialogEvent::DeleteWorkspace { dir, sessions } => {
+                    let deleted = self.shell.store.delete_sessions(&sessions);
+                    self.shell.toasts.push(
+                        crate::ui::toasts::ToastDraft {
+                            tone: pure_client::wire::NoticeTone::Success,
+                            text: crate::tr!("Deleted {} conversations in {}", deleted, dir),
+                            action: crate::ui::toasts::ToastAction::None,
+                        },
+                        web_time::Instant::now(),
+                    );
                 }
                 crate::ui::dialog::DialogEvent::Rewind(prompt) => {
                     // The rewind rewrites history a running turn is

@@ -1207,6 +1207,20 @@ impl Store {
         self.show_welcome();
     }
 
+    /// Deletes the recorded sessions named by `ids`, the whole of a
+    /// workspace group. The engine stops any that still run and removes
+    /// their transcripts. Reports how many delete requests went out.
+    pub fn delete_sessions(&mut self, ids: &[String]) -> usize {
+        if self.active.as_ref().is_some_and(|id| ids.contains(id)) {
+            self.show_welcome();
+        }
+        for id in ids {
+            self.client.delete_session(id);
+            self.timings.forget(id);
+        }
+        ids.len()
+    }
+
     /// The session `id` was forked from, as the directory lists it.
     #[must_use]
     pub fn fork_parent(&self, id: &str) -> Option<&str> {
