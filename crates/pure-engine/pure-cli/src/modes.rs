@@ -1290,7 +1290,9 @@ async fn rpc_validate_prompt(
             return Err("model changed during image prompt validation; retry while idle".into());
         }
         if !model.input.contains(&pure_ai::types::InputModality::Image)
-            || !current.input.contains(&pure_ai::types::InputModality::Image)
+            || !current
+                .input
+                .contains(&pure_ai::types::InputModality::Image)
         {
             return Err("selected model does not support image input".into());
         }
@@ -2694,7 +2696,6 @@ async fn rpc_configure_external_tools(
         "edit",
         "bash",
         "powershell",
-        "docs",
         "grep",
         "find",
         "ls",

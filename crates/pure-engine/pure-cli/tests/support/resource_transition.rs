@@ -17,7 +17,7 @@ async fn controlled_same_id_restart_changes_actual_model_resources_and_preserves
     }}}).to_string());
     put(
         root.join("agent/settings.json"),
-        r#"{"defaultTools":["docs"],"retry":{"enabled":false}}"#,
+        r#"{"defaultTools":["read"],"retry":{"enabled":false}}"#,
     );
     for name in ["a", "b"] {
         put(

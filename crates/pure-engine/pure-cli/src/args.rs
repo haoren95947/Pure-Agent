@@ -650,9 +650,9 @@ pub enum RunMode {
 
 /// Print the help text to stdout. Mirrors TS `printHelp`, scoped to v1 flags.
 pub fn print_help() {
-    let builtin = "read, bash, edit, write, docs";
+    let builtin = "read, bash, edit, write";
     println!(
-        "{name} - AI coding assistant with read, bash, edit, write, docs tools
+        "{name} - AI coding assistant with read, bash, edit, write tools
 
 {u}Usage:{r}
   {name} [options] [@files...] [messages...]

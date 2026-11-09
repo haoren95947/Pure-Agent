@@ -20,10 +20,9 @@
 //! - **No `ModelRuntime`/multi-provider registry.** The resolver supports the
 //!   built-in Anthropic/OpenAI-compatible providers and `models.json`, but
 //!   runtime catalog mutation remains outside this layer.
-//! - **Built-in tools**: `read`, `bash`, `edit`, `write`, and the read-only
-//!   `docs` lookup tool. The former pure-only `grep`, `find`, `ls`, and
-//!   `powershell` tools remain library modules but are not registered by the
-//!   CLI.
+//! - **Built-in tools**: `read`, `bash`, `edit`, `write`. The former pure-only
+//!   `grep`, `find`, `ls`, and `powershell` tools remain library modules but
+//!   are not registered by the CLI.
 //! - **Session restore (`-c`/`-r`/`--session`)** is *partially* supported: a
 //!   fresh session is always created. The harness's `create` rejects sessions
 //!   that already have records unless `allow_existing_session` is enabled.
@@ -57,7 +56,6 @@ use pure_tools::{
 };
 
 use crate::args::Args;
-use crate::docs_tool::create_docs_tool;
 use crate::provider::ResolvedModel;
 use crate::resource_dirs::{
     discover_append_system_prompt_file, discover_system_prompt_file, extension_dirs,
@@ -122,7 +120,7 @@ pub(crate) fn file_io_router(
 }
 
 /// The coding tools registered by the CLI by default.
-pub const BUILTIN_TOOL_NAMES: &[&str] = &["read", "bash", "edit", "write", "docs"];
+pub const BUILTIN_TOOL_NAMES: &[&str] = &["read", "bash", "edit", "write"];
 
 /// The default coding system prompt for the CLI's built-in tools.
 ///
@@ -212,7 +210,7 @@ pub fn default_system_prompt_with_tool_prompts(
         tool_lines
     };
 
-    // Tool-specific rules (Bash on Windows, docs before guessing) live in the
+    // Tool-specific rules (Bash on Windows, for instance) live in the
     // tool's own line or description, not here a second time.
     let guidelines = [
         "- Reply in the same language as the user's latest message (the conversation's language when
@@ -282,7 +280,6 @@ fn builtin_tool_snippet(name: &str) -> Option<&'static str> {
         "bash" => "Execute Bash commands (Bash/POSIX syntax, also on Windows)",
         "edit" => "Find/replace edits to existing files",
         "write" => "Create or overwrite files",
-        "docs" => "Look up pure commands, extensions, Pi package compatibility and .pure-agent configuration instead of guessing",
         "grep" => "Search file contents for a pattern",
         "find" => "Find files by glob pattern",
         "ls" => "List directory contents",
@@ -987,7 +984,8 @@ pub async fn build_prepared(
     }
 
     let mut prompt_templates: Vec<pure_harness::types::PromptTemplate> = Vec::new();
-    let mut prompt_diags: Vec<pure_harness::prompt_templates::PromptTemplateDiagnostic> = Vec::new();
+    let mut prompt_diags: Vec<pure_harness::prompt_templates::PromptTemplateDiagnostic> =
+        Vec::new();
     if !args.no_prompt_templates && resource_selection.is_none() {
         let mut dirs = if args.dev_local_only || args.project_only {
             project_prompt_template_dirs(cwd)
@@ -1412,7 +1410,8 @@ pub async fn build_prepared(
                         continue;
                     }
                     for decision in runtime.reconcile(&report) {
-                        if let pure_harness::runtime::RecoveryDecision::Abort { run_id } = decision {
+                        if let pure_harness::runtime::RecoveryDecision::Abort { run_id } = decision
+                        {
                             if args.verbose {
                                 eprintln!(
                                     "recovered interrupted run {run_id} on lane '{lane}' (aborted)"
@@ -1485,7 +1484,10 @@ fn install_extension_settlement_bridge(
         }
         let session = sessions.lock().unwrap().clone();
         if let Some(snapshot) = session.snapshot_arc() {
-            pure_extensions::dispatch_empty_event(&snapshot, pure_plugin_sdk::EventTag::AgentSettled);
+            pure_extensions::dispatch_empty_event(
+                &snapshot,
+                pure_plugin_sdk::EventTag::AgentSettled,
+            );
         }
     });
 }
@@ -1723,7 +1725,9 @@ pub async fn dispatch_session_event_async(
         (session.snapshot_arc(), session.keepalive())
     };
     match snapshot {
-        Some(snapshot) => pure_extensions::dispatch_lifecycle_event(&snapshot, tag, keepalive).await,
+        Some(snapshot) => {
+            pure_extensions::dispatch_lifecycle_event(&snapshot, tag, keepalive).await
+        }
         None => None,
     }
 }
@@ -2247,7 +2251,8 @@ where
     }
 
     let mut prompt_templates: Vec<pure_harness::types::PromptTemplate> = Vec::new();
-    let mut prompt_diags: Vec<pure_harness::prompt_templates::PromptTemplateDiagnostic> = Vec::new();
+    let mut prompt_diags: Vec<pure_harness::prompt_templates::PromptTemplateDiagnostic> =
+        Vec::new();
     if !effective_args.no_prompt_templates {
         let js_paths: &[PathBuf] = &[];
         let package_paths: &[PathBuf] = &[];
@@ -2916,10 +2921,6 @@ fn build_tools(ctx: &ExecutionToolContext, args: &Args) -> Vec<HarnessTool> {
         ),
         ("edit", HarnessTool::new(create_edit_tool(ctx))),
         ("write", HarnessTool::new(create_write_tool(ctx))),
-        (
-            "docs",
-            HarnessTool::new(create_docs_tool()).with_replay(ToolReplay::Safe),
-        ),
     ];
 
     // Add PowerShell tool on Windows
@@ -4730,7 +4731,7 @@ mod tests {
         assert!(p.contains("bash"));
         assert!(p.contains("edit"));
         assert!(p.contains("write"));
-        assert!(p.contains("docs"));
+        assert!(!p.contains("- docs"));
         assert!(!p.contains("- grep"));
         assert!(!p.contains("- find"));
         assert!(!p.contains("- ls"));
@@ -4821,9 +4822,13 @@ mod tests {
         for replayed in [false, true] {
             let p =
                 default_system_prompt_with_tools("/tmp/proj", replayed, &default_prompt_tools());
-            for phrase in ["the same plan", "Windows", "guessing"] {
+            for phrase in ["the same plan", "Windows"] {
                 assert_eq!(p.matches(phrase).count(), 1, "{phrase:?} repeated: {p}");
             }
+            assert!(
+                !p.contains("guessing"),
+                "the removed docs tool must not leave its lookup rule behind: {p}"
+            );
             assert!(
                 !p.contains("todo tool"),
                 "extension rules require explicit metadata"
@@ -4853,7 +4858,7 @@ mod tests {
                 .map(|tool| tool.replay)
         };
 
-        for read_only in ["read", "docs"] {
+        for read_only in ["read"] {
             assert_eq!(
                 replay_of(read_only),
                 Some(ToolReplay::Safe),
@@ -4872,7 +4877,7 @@ mod tests {
     }
 
     #[test]
-    fn default_tools_include_docs_lookup() {
+    fn default_tools_leave_out_the_docs_lookup() {
         let env = Arc::new(OsExecutionEnv::with_cwd(PathBuf::from(".")));
         let env_dyn: Arc<dyn pure_tools::ExecutionEnv> = env.clone();
         let mut_env: Arc<dyn pure_tools::MutatingEnv> = env.clone();
@@ -4882,11 +4887,9 @@ mod tests {
             .map(|tool| tool.tool.schema().name.clone())
             .collect();
 
-        // `docs` is a default capability; the legacy pure-only lookup tools stay
-        // unregistered. Asserted by membership (not exact equality) because
-        // `powershell` is Windows-only and `settings.json#defaultTools` may
-        // narrow the set in a developer's environment.
-        assert!(names.contains(&"docs".to_string()));
+        // The `docs` lookup was removed from the built-in set; the legacy
+        // pure-only tools stay unregistered too.
+        assert!(!names.contains(&"docs".to_string()));
         for legacy in ["grep", "find", "ls"] {
             assert!(
                 !names.contains(&legacy.to_string()),

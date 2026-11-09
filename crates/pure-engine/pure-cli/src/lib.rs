@@ -39,7 +39,6 @@ mod child_agents;
 pub mod config;
 mod credentials;
 pub mod dev_extension;
-pub mod docs_tool;
 pub mod events;
 pub mod experimental;
 pub mod export;

@@ -252,7 +252,11 @@ async fn concurrent_native_hosts_exact_model_input_invocation_none_and_restart()
         );
     }
     std::fs::create_dir_all(root.join(".pure-agent/packages/a/extensions")).unwrap();
-    std::fs::copy(&fixture, root.join(".pure-agent/packages/a/extensions").join(dll)).unwrap();
+    std::fs::copy(
+        &fixture,
+        root.join(".pure-agent/packages/a/extensions").join(dll),
+    )
+    .unwrap();
     put(root.join(".pure-agent/packages.json"), json!({"packages":[
         {"name":"a","version":"1","source":"fixture","cargo_package":"plugin-stub","artifacts":[dll]},
         {"name":"b","version":"1","source":"fixture","cargo_package":"none","artifacts":[]},
@@ -279,7 +283,7 @@ async fn concurrent_native_hosts_exact_model_input_invocation_none_and_restart()
     // Exact default ignores saved tool defaults, without changing extension loading.
     put(
         root.join("agent/settings.json"),
-        r#"{"defaultTools":["docs"],"retry":{"enabled":false}}"#,
+        r#"{"defaultTools":["read"],"retry":{"enabled":false}}"#,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     put(root.join("agent/models.json"), json!({"providers":{"fixture":{
