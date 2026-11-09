@@ -8,7 +8,8 @@
 #   pure-backend.exe      ACP backend and kernel host in one binary
 #                         (`rpc` serves ACP; `--mode rpc` is the session child)
 #   extensions\*.dll      pure-goal, pure-todo, pure-subagents, pure-codemode,
-#                         pure-permission-gate, pure-rtk (+ vendor\rtk binaries)
+#                         pure-permission-gate, pure-rtk, pure-plan-mode,
+#                         pure-swarm (+ vendor\rtk binaries)
 #   skills\               bundled skills seed for ~/.pure-agent/agent/skills
 
 [CmdletBinding()]
@@ -46,7 +47,8 @@ $backendTarget = Join-Path $root "target\$Configuration"
 if (-not $SkipBuild) {
     Invoke-Cargo (Join-Path $root "Cargo.toml") @(
         "pure-desktop-app", "pure-backend", "pure-goal", "pure-todo",
-        "pure-subagents", "pure-codemode", "pure-permission-gate", "pure-rtk"
+        "pure-subagents", "pure-codemode", "pure-permission-gate", "pure-rtk",
+        "pure-plan-mode", "pure-swarm"
     )
 }
 
@@ -60,7 +62,7 @@ Copy-Item (Join-Path $backendTarget "pure-backend.exe") $dist
 
 $extensions = Join-Path $dist "extensions"
 New-Item -ItemType Directory -Path $extensions | Out-Null
-foreach ($name in @("pure_goal", "pure_todo", "pure_subagents", "pure_codemode", "pure_permission_gate", "pure_rtk")) {
+foreach ($name in @("pure_goal", "pure_todo", "pure_subagents", "pure_codemode", "pure_permission_gate", "pure_rtk", "pure_plan_mode", "pure_swarm")) {
     Copy-Item (Join-Path $backendTarget "$name.dll") $extensions
 }
 # The RTK extension shells out to a per-platform binary beside the DLL.
@@ -81,8 +83,11 @@ $required = @(
     "extensions\pure_codemode.dll",
     "extensions\pure_permission_gate.dll",
     "extensions\pure_rtk.dll",
+    "extensions\pure_plan_mode.dll",
+    "extensions\pure_swarm.dll",
     "extensions\vendor\rtk\win32-x64\rtk.exe",
-    "skills\pure-guide\SKILL.md"
+    "skills\pure-guide\SKILL.md",
+    "skills\demo\SKILL.md"
 )
 $missing = @()
 foreach ($item in $required) {

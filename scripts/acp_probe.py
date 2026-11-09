@@ -6,6 +6,7 @@ Prints every JSON-RPC frame it receives and a PASS/FAIL summary.
 import argparse
 import base64
 import hashlib
+import itertools
 import json
 import os
 import queue
@@ -18,6 +19,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPLY = "mock reply: hello from pure"
+# Tool names each model request carried, newest last, so the probe can assert
+# which tools reach the model context.
+TOOLS_SEEN = []
+TOOLS_LOCK = threading.Lock()
+
+
+def last_tools():
+    with TOOLS_LOCK:
+        return TOOLS_SEEN[-1] if TOOLS_SEEN else []
+
+
+# Hosts remember cancelled tool call ids, so every mock call needs its own.
+CALL_SEQ = itertools.count(1)
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -75,6 +89,12 @@ class MockHandler(BaseHTTPRequestHandler):
             body = json.loads(raw.decode("utf-8"))
         except Exception:
             body = {}
+        names = sorted(
+            str(tool.get("function", {}).get("name") or tool.get("name") or "")
+            for tool in body.get("tools") or []
+        )
+        with TOOLS_LOCK:
+            TOOLS_SEEN.append(names)
         messages = body.get("messages") or []
 
         def flatten(message):
@@ -102,6 +122,8 @@ class MockHandler(BaseHTTPRequestHandler):
             self._tool_call("bash", {"command": "echo permission ok"})
         elif "codemode" in last_user:
             self._tool_call("codemode", {"code": "return {ok: true, message: 'codemode ran'};"})
+        elif "make a plan" in last_user:
+            self._tool_call("exit_plan", {"plan": "1. Inspect\n2. Implement"})
         elif "compact" in last_user or "summar" in last_user:
             self._text("mock summary of earlier turns")
         elif "delegate" in last_user:
@@ -148,7 +170,7 @@ class MockHandler(BaseHTTPRequestHandler):
                 "index": 0,
                 "delta": {"tool_calls": [{
                     "index": 0,
-                    "id": "call_mock_1",
+                    "id": f"call_mock_{next(CALL_SEQ)}",
                     "type": "function",
                     "function": {"name": name, "arguments": json.dumps(arguments)},
                 }]},
@@ -352,6 +374,12 @@ def main():
     mode_values = [value.get("value") for value in mode_option.get("options") or []]
     print("mode values:", mode_values)
     results.append(("mode option offers full access", "full" in mode_values))
+    swarm_option = next(
+        (option for option in (new.get("result") or {}).get("configOptions") or []
+         if option.get("id") == "swarm"),
+        {},
+    )
+    results.append(("swarm option defaults off", swarm_option.get("currentValue") == "off"))
     time.sleep(1.0)
     commands = []
     while True:
@@ -369,6 +397,7 @@ def main():
                 commands = [c.get("name") for c in update.get("availableCommands") or []]
     print("commands:", commands)
     results.append(("extension commands", all(name in commands for name in ("goal", "todos"))))
+    results.append(("on-demand mode commands", all(name in commands for name in ("plan", "swarm"))))
     results.append(("skill command", any("demo" in str(name) for name in commands)))
 
     off = wait_for(send("_pure/config/set", {
@@ -719,6 +748,14 @@ def main():
         print("mode ->", mode_value)
         results.append(("mode option", mode_value == "plan"))
 
+        swarm = wait_for(send("session/set_config_option", {"sessionId": session_id, "configId": "swarm", "value": "on"}))
+        swarm_value = next((o.get("currentValue") for o in (swarm.get("result") or {}).get("configOptions") or [] if o.get("id") == "swarm"), None)
+        print("swarm ->", swarm_value)
+        results.append(("swarm option on", swarm_value == "on"))
+        swarm_off = wait_for(send("session/set_config_option", {"sessionId": session_id, "configId": "swarm", "value": "off"}))
+        swarm_off_value = next((o.get("currentValue") for o in (swarm_off.get("result") or {}).get("configOptions") or [] if o.get("id") == "swarm"), None)
+        results.append(("swarm option off", swarm_off_value == "off"))
+
         rename = wait_for(send("_pure/session/rename", {"sessionId": session_id, "title": "Probe Session"}))
         results.append(("_pure/session/rename", "error" not in rename))
 
@@ -786,6 +823,64 @@ def main():
                 "error" not in partial_load
                 and user_texts == ["use the todo tool", "run codemode now"],
             ))
+
+        # goal/plan/swarm are features, not tools: their tools only reach the
+        # model context while the user switched them on.
+        def mode_tools(config_id, value):
+            wait_for(send("session/set_config_option", {
+                "sessionId": session_id, "configId": config_id, "value": value,
+            }))
+            wait_for(send("session/prompt", {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "hello"}],
+            }), timeout=90)
+            return last_tools()
+
+        hidden = mode_tools("mode", "default")
+        print("tools with modes off:", hidden)
+        results.append((
+            "on-demand tools hidden",
+            not any(name in hidden for name in ("goal", "exit_plan", "swarm"))
+            and "todo" in hidden,
+        ))
+        results.append(("swarm tool loads on demand", "swarm" in mode_tools("swarm", "on")))
+        results.append(("swarm tool unloads", "swarm" not in mode_tools("swarm", "off")))
+        results.append(("plan tool loads on demand", "exit_plan" in mode_tools("mode", "plan")))
+
+        # The mock proposes an exit_plan call; wait_for auto-approves the
+        # review. The approved plan must leave plan mode and unload the tool.
+        review = []
+        wait_for(
+            send("session/prompt", {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "make a plan"}],
+            }),
+            timeout=90,
+            collect=review,
+        )
+        plan_updates = []
+        asked = 0
+        for label, raw in review:
+            if label != "out" or not raw.startswith("{"):
+                continue
+            try:
+                frame = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if frame.get("method") == "session/request_permission":
+                asked += 1
+                continue
+            update = (frame.get("params") or {}).get("update") or {}
+            if update.get("sessionUpdate") == "plan":
+                plan_updates.append(update)
+        print("plan review permission asks:", asked)
+        results.append(("exit_plan asks for a review", asked == 1))
+        results.append(("exit_plan approval emits a plan", bool(plan_updates)))
+        wait_for(send("session/prompt", {
+            "sessionId": session_id,
+            "prompt": [{"type": "text", "text": "hello"}],
+        }), timeout=90)
+        results.append(("plan approval unloads exit_plan", "exit_plan" not in last_tools()))
 
         image = base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="

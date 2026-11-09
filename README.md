@@ -17,7 +17,7 @@
 │ dist\pure-backend.exe --mode rpc + extensions\*.dll        │
 │ 内核宿主：模型/工具/skills；pure-goal · pure-todo ·         │
 │ pure-subagents · pure-codemode · pure-permission-gate      │
-│ · pure-rtk                                                 │
+│ · pure-rtk · pure-plan-mode · pure-swarm                   │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -28,7 +28,9 @@
   窗口标题、保存后关闭表单、会话菜单、Plugins 页、品牌）。
 - ACP 内核不是重写：`crates/pure-engine/pure-acp` 是 rpi 的 ACP 适配器，
   由 `pure-backend` 仅做环境初始化、目录创建、默认配置播种后调用 `pure_acp::protocol::run`。
-- goal/todo/subagents/codemode/permission-gate/rtk/skills 全部来自内核扩展与原生 skills，没有并行实现。
+- goal/todo/subagents/codemode/permission-gate/rtk/plan-mode/swarm/skills 全部来自内核扩展与原生
+  skills，没有并行实现。goal/plan/swarm 是用户点名的功能：未通过菜单或 `/goal`、`/plan`、
+  `/swarm` 开启时，它们的工具不进入模型上下文。
 
 ## 构建
 
@@ -49,6 +51,8 @@ extensions\pure_subagents.dll
 extensions\pure_codemode.dll
 extensions\pure_permission_gate.dll
 extensions\pure_rtk.dll
+extensions\pure_plan_mode.dll
+extensions\pure_swarm.dll
 extensions\vendor\rtk\{win32-x64,darwin-x64,darwin-arm64}\rtk[.exe]
 skills\pure-guide\SKILL.md
 skills\demo\SKILL.md
@@ -61,7 +65,8 @@ THIRD_PARTY_NOTICES.md
 
 ```powershell
 cargo build --release -p pure-desktop-app -p pure-backend -p pure-goal -p pure-todo `
-  -p pure-subagents -p pure-codemode -p pure-permission-gate -p pure-rtk
+  -p pure-subagents -p pure-codemode -p pure-permission-gate -p pure-rtk `
+  -p pure-plan-mode -p pure-swarm
 ```
 
 ## 数据目录
@@ -91,7 +96,9 @@ cargo build --release -p pure-desktop-app -p pure-backend -p pure-goal -p pure-t
 |------|----------|----------|
 | 模型选择 | 会话配置 `model` 选项（`provider/model`） | `session/set_config_option` → 内核 `set_model` |
 | 思考等级 | `thinking` 选项 | 内核 `set_thinking_level` |
-| `/goal` | goal 胶囊 + `goal` 文本选项 | 会话级 goal 注入每轮 prompt；`pure-goal` 工具仍可用 |
+| `/goal` | goal 胶囊 + `goal` 文本选项 | 会话级 goal 注入每轮 prompt；`pure-goal` 工具在 `SessionStart` 时移出活动工具集，只由 `/goal` 驱动 |
+| 计划 | 模式菜单「计划」/ `/plan` | `pure-plan-mode`：开启时加载 `exit_plan` 并注入只读规划指引；评审结果翻译为 ACP `plan` |
+| 集群 | 模式菜单「集群」/ `/swarm` | `pure-swarm`：开启时加载 `swarm`，按模板并行启动宿主子代理并聚合报告 |
 | `/compact` | 斜杠菜单 / `_pure/session/compact` | 内核原生 compact |
 | Todo | 计划/待办面板 | `pure-todo` 的 `todo` 工具结果 → ACP `plan` 更新 |
 | Subagent | 子代理工具卡 | `pure-subagents` 的 `delegate_task` |
@@ -100,6 +107,7 @@ cargo build --release -p pure-desktop-app -p pure-backend -p pure-goal -p pure-t
 | 设置 | 设置页 | `_pure/config/get|set|test`、`_pure/auth/set`、`_pure/models/list` |
 | 文件面板 | 工作区浏览器 | `_pure/folders`、`_pure/fs` |
 | 会话操作 | 侧栏行菜单 | 重命名、置顶/归档（本地）、`_pure/session/fork|export|compact` |
+| 工作区删除 | 分组行的垃圾桶按钮 | 确认后逐个 `session/delete`，分组清空即从侧栏消失 |
 | 媒体保存 | 图片/音频卡片 | `_pure/image/save`（按 sha256 从会话历史取字节，落 `generated/`） |
 | MCP | 设置页 + 状态点 | `agent/mcp.json` 注入每个新会话，`_pure/mcp_status` 逐服务器回报 |
 | 权限规则 | 设置页工具规则 | `agent/permissions.json` 由 `pure-permission-gate` 执行（deny > allow > default；`confine_paths` 限制文件工具） |
@@ -118,14 +126,15 @@ cargo build --release -p pure-desktop-app -p pure-backend -p pure-goal -p pure-t
   `_pure/session/export` 输出 Markdown；`session/list` 回读重命名标题与 fork 父会话。
 - `_pure/themes` 仍返回空集合，桌面降级为内置外观；`_pure/options/list|set`
   提供思考等级、压缩保留量、provider 重试与子代理并发/轮次/超时共六项，写入内核 `settings.json`。
-  Agent & Sessions 页只渲染引擎真实提供的分组，缺失分组（如内核没有的 Swarm）整组隐藏。
+  Agent & Sessions 页只渲染引擎真实提供的分组，缺失分组整组隐藏。
 - MCP 配置来自设置页写入的 `agent/mcp.json`；客户端显式传入非空 `mcpServers`
   时以客户端为准。任一服务器启动失败不会阻塞会话，状态回报为 `failed`。
 - 权限规则由 `pure-permission-gate` 在每次工具调用时读取；`confine_paths`
   限制文件工具在工作区内。未命中规则时 bash/powershell/write/edit 仍按内置策略询问。
 - 访问模式写入 `agent/permissions.json` 的 `mode`：`default` 走上述规则；
   `full` 让新会话带 `--bypass` 启动，且 ACP 层对运行中会话的权限对话框直接
-  选择 allow 选项，不再打扰用户。
+  选择 allow 选项，不再打扰用户。例外：计划评审（`exit_plan`）是工作流本身，
+  完全访问下仍会询问用户。
   会话内的模式菜单与 Permissions 页都会列出 Default / Full access。
 - 插件开关写入 `agent/plugins.json`（`{name: {enabled: false}}`）；宿主启动时
   以 `PURE_DISABLED_EXTENSIONS` 传入被关闭的 DLL 名，加载器直接跳过，因此
@@ -135,8 +144,11 @@ cargo build --release -p pure-desktop-app -p pure-backend -p pure-goal -p pure-t
   英语为源语言，中文缺失条目自动回退英文。General 页已去掉语言切换控件，
   仅原生可执行文件跟随 Windows 界面语言，测试与工具默认英文。
 - goal 语义：会话级文本目标，注入每一轮，并写入 `goals.json` 以便重启后回读；
-  不启用 `pure-goal` 的预算/暂停状态机。
-- `/plan` 与 `mode=plan` 依赖已移除的 `pure-plan-mode` 扩展；选项仍存在，但不会进入只读规划。
+  不启用 `pure-goal` 的预算/暂停状态机。`goal` 工具在 `SessionStart` 时从活动工具集移除。
+- `/plan` 与 `mode=plan` 由 `pure-plan-mode` 提供：开启时 `exit_plan` 进入活动工具集，
+  prompt 注入只读规划指引；用户批准/拒绝后退出计划模式，修改则保持开启。
+  `_pure/swarm/resume` 仍未实现，集群子代理是完成即释放的内存子会话。
+- 内置工具为 `read`/`bash`/`edit`/`write`；原 `docs` 内置工具已移除。
 - `codemode` 依赖内核 ToolProgram action 30 / protocol v1 与 `x-pure-execution-mode`、
   `x-pure-result-envelope` 注册关键字；代码在 QuickJS 中运行，可调用本次调用可见的工具。
 - 兼容增强通过 `pure_acp::pure_compat::enable()` 打开（仅 `pure-backend` 调用）；
@@ -146,7 +158,7 @@ cargo build --release -p pure-desktop-app -p pure-backend -p pure-goal -p pure-t
 
 ```powershell
 # 1) 根 workspace 全量单测（桌面壳 + 内核库；GPU 探针需单线程避免渲染竞争）
-cargo test -j 4 --workspace -- --test-threads=1
+cargo test -j 1 --workspace -- --test-threads=1
 
 # 2) ACP 适配器单测（含兼容关闭时保持原行为）
 cargo test -p pure-acp
@@ -170,7 +182,8 @@ crates/pure-engine/        CLI 内核（pure-cli 作为库链接进 pure-backend
   pure-acp                 ACP v1 服务、`_pure/*` 兼容
 crates/pure-tui/           终端 UI 渲染库（单 crate）
 crates/pure-extensions-packages/
-                           goal/todo/subagents/codemode/permission-gate/rtk 扩展
+                           goal/todo/subagents/codemode/permission-gate/rtk/
+                           plan-mode/swarm 扩展
   examples/                plugin-stub、extension-hello 示例插件
 skills/                    随 dist 分发的技能
 scripts/build.ps1          一键构建 + 汇总 dist

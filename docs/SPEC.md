@@ -12,15 +12,19 @@
   引擎文件名 `pure-backend`、窗口标题与产物名 `pure-agent`、数据目录 `~/.pure-agent`；保存成功后关闭
   设置表单（`Settings::follow` 使用“写入已落地”信号）；会话操作 `⋯` 菜单放到侧栏
   每个会话行末尾（重命名、置顶、分叉、压缩、导出、复制 ID、关闭、归档按行执行）；
-  Plugins 页改为展示内核扩展（goal/todo/subagents/codemode/permission-gate/rtk）；移除
+  Plugins 页改为展示内核扩展（goal/todo/subagents/codemode/permission-gate/rtk/
+  plan-mode/swarm）；移除
   Vim 模式与 initialize 能力提示条（pure-acp 不提供 steering）。
 - **ACP 内核**：`crates/pure-engine/pure-acp`（复用 pure-extcore），新增
   `pure-backend` 入口负责环境与默认配置，随后调用 `pure_acp::protocol::run`。
 - **Agent 运行时**：内核 0.21.0 作为库链接进 `pure-backend`；每个 ACP 会话由同一个
   `pure-backend.exe --mode rpc` 子进程承载。
-- **能力复用**：goal/todo/subagents/codemode/permission-gate/rtk/skills 全部使用
-  `pure-goal`、`pure-todo`、`pure-subagents`、`pure-codemode`、
-  `pure-permission-gate`、`pure-rtk` 与内核原生 `SKILL.md`，不写并行实现。
+- **能力复用**：goal/todo/subagents/codemode/permission-gate/rtk/plan-mode/swarm/
+  skills 全部使用 `pure-goal`、`pure-todo`、`pure-subagents`、`pure-codemode`、
+  `pure-permission-gate`、`pure-rtk`、`pure-plan-mode`、`pure-swarm` 与内核原生
+  `SKILL.md`，不写并行实现。
+- **功能而非工具**：goal/plan/swarm 的工具仅在用户通过模式菜单或 `/goal`、`/plan`、
+  `/swarm` 点名后进入活动工具集；`SessionStart` 时从上下文移除。
 
 不允许的替代方案：自研 ACP 循环、自建会话存储、自写工具流或流式翻译；继续开发
 用内置 goal/todo 取代内核扩展。
@@ -46,7 +50,10 @@ pure-backend.exe --mode rpc (内核宿主)
   ├─ extensions/pure_todo.dll
   ├─ extensions/pure_subagents.dll
   ├─ extensions/pure_codemode.dll
-  └─ extensions/pure_permission_gate.dll
+  ├─ extensions/pure_permission_gate.dll
+  ├─ extensions/pure_rtk.dll
+  ├─ extensions/pure_plan_mode.dll
+  └─ extensions/pure_swarm.dll
 ```
 
 - 桌面以 `<engine> rpc` 启动后端；同一 exe 不带 `rpc`（如 `--mode rpc`）时进入内核
@@ -74,18 +81,26 @@ logs\backend.log      每次启动追加 home/exe/宿主 路径与退出码
 | ACP 方法 | 行为 |
 |----------|------|
 | `initialize` | 返回 pure-acp 能力（工具程序、权限、使用量等） |
-| `session/new` | 启动 内核子进程；返回 `model` / `thinking` 选项；兼容层下追加 `mode` / `goal`；随后发送 `available_commands_update` |
+| `session/new` | 启动 内核子进程；返回 `model` / `thinking` 选项；兼容层下追加 `mode` / `goal` / `swarm`；随后发送 `available_commands_update` |
 | `session/load` / `resume` | 恢复历史；配置与命令同上 |
 | `session/prompt` | 流式 `agent_message_chunk`、`agent_thought_chunk`、`tool_call` / `tool_call_update`、`plan`；以 `stopReason` 结束 |
 | `session/cancel` | 中止当前 run，返回 `cancelled` |
-| `session/set_config_option` | `model`（`provider/model`）、`thinking`；兼容层下 `goal`（文本）、`mode`（default/plan/full，full 持久化到 `permissions.mode`） |
+| `session/delete` | 删除会话记录（幂等）；桌面「删除工作区」对分组内每个会话调用 |
+| `session/set_config_option` | `model`（`provider/model`）、`thinking`；兼容层下 `goal`（文本）、`mode`（default/plan/full，full 持久化到 `permissions.mode`）、`swarm`（on/off） |
 | 权限 | `pure-permission-gate` 对 bash/powershell/write/edit 按 `permissions.json`（deny > allow > default）询问或放行，并执行 `confine_paths`；确认经 `ui_dialog_request` → ACP `session/request_permission` |
 | 命令 | `/compact` + 内核 `get_commands` 的扩展命令 + `SKILL.md` 派生的 `skill:<name>` |
 
-`mode=plan` 依赖已移除的 `pure-plan-mode` 扩展，当前选项保留但静默降级。
+`mode=plan` 由 `pure-plan-mode` 承担：引擎以文本参数执行扩展命令 `/plan start|off`，
+插件把 `exit_plan` 加入/移出活动工具集；开启时 prompt 注入只读规划指引。
+`exit_plan` 的评审对话框在插件 `ToolCall` 事件处理器中发起（工具 worker 线程没有
+宿主对话框调用上下文），批准后工具在下一个 `TurnEnd` 卸载。
 `goal` 文本保存在会话内，并在每轮 prompt 前以固定前缀注入；`/goal clear` 写入空串。
-`plan_mode_complete`（若扩展提供该工具）与 `todo` 工具结果会翻译为 ACP `plan` 更新；
+`exit_plan` / `plan_mode_complete` 与 `todo` 工具结果会翻译为 ACP `plan` 更新；
 `turn_start`/`turn_end` 翻译为 `_pure/turn` 更新。
+`swarm=on|off` 执行扩展命令 `/swarm on|off`；`swarm` 工具只在开启时进入活动工具集。
+`SessionStart` 时 `pure-goal`、`pure-plan-mode`、`pure-swarm` 各自把自己的工具移出
+活动集合，未点名时模型上下文不含 `goal`、`exit_plan`、`swarm`。
+完全访问（`permissions.mode=full`）的自动批准不适用于 `exit_plan` 计划评审。
 
 ## 6. `_pure/*` 兼容
 
@@ -123,14 +138,14 @@ pure-acp 保持上游原始线格式，因此上游 223 个单测全部通过。
 ```
 dist\pure-agent.exe
 dist\pure-backend.exe
-dist\extensions\{pure_goal,pure_todo,pure_subagents,pure_codemode,pure_permission_gate}.dll
+dist\extensions\{pure_goal,pure_todo,pure_subagents,pure_codemode,pure_permission_gate,pure_rtk,pure_plan_mode,pure_swarm}.dll
 dist\skills\{pure-guide,demo}\SKILL.md
 dist\README.md  dist\THIRD_PARTY_NOTICES.md
 ```
 
 脚本对必需产物做存在性检查，缺失即失败。
 
-## 8. 验收映射（F1–F7）
+## 8. 验收映射（F1–F9）
 
 | # | 要求 | 实现 | 验证 |
 |---|------|------|------|
@@ -138,9 +153,11 @@ dist\README.md  dist\THIRD_PARTY_NOTICES.md
 | F2 | 流式聊天、工具卡、思考、取消、历史 | pure-acp `session/prompt`、`session/load` | 探针：mock SSE 流式文本 + `end_turn`；桌面实测取消与历史 |
 | F3 | Subagent | `pure-subagents` `delegate_task` | 探针：`delegate_task` 工具卡 + 子会话返回；桌面工具卡 |
 | F4 | Todolist | `pure-todo` `todo` 工具 → ACP `plan` | 探针：`todo` 工具卡 + `plan` 更新 |
-| F5 | `/goal` | 会话 `goal` 选项，每轮注入；`/goal clear` 置空 | 探针：set_config_option 回读 `finish pure` |
+| F5 | `/goal` | 会话 `goal` 选项，每轮注入；`/goal clear` 置空；`goal` 工具默认不在活动集 | 探针：set_config_option 回读 `finish pure` |
 | F6 | Skills | 扫描 `agent\skills` 与 `.pure-agent\skills` 的 `SKILL.md` | 探针：命令表出现 `skill:demo` |
-| F7 | 扩展命令 | `pure-goal` / `pure-todo` / `pure-subagents` / `pure-codemode` | 探针：命令表含 `goal`、`todos`；`codemode` 工具出现在工具表 |
+| F7 | 扩展命令 | `pure-goal` / `pure-todo` / `pure-subagents` / `pure-codemode` / `pure-plan-mode` / `pure-swarm` | 探针：命令表含 `goal`、`todos`、`plan`、`swarm`；`codemode` 工具出现在工具表 |
+| F8 | 计划模式 | `pure-plan-mode` 的 `exit_plan`，开启才加载 | 探针：`mode=plan` → `plan` 命令；桌面批准后 `exit_plan` 移出工具表 |
+| F9 | 集群 | `pure-swarm` 的 `swarm`，开启才加载；子代理带 `swarm` 元数据 | 探针：`swarm=on` → 工具表出现 `swarm`；桌面显示集群卡片 |
 
 补充验收：`_pure/turn` 起止、`_pure/session/compact`、`_pure/fs`、`_pure/folders`、
 `_pure/themes`、`_pure/options/*`、插件开关、完全访问与子代理 options 均在探针的 63 项检查内。
@@ -148,7 +165,7 @@ dist\README.md  dist\THIRD_PARTY_NOTICES.md
 ## 9. 测试
 
 ```powershell
-cargo test -j 4 --workspace -- --test-threads=1
+cargo test -j 1 --workspace -- --test-threads=1
 cargo test -p pure-acp
 python scripts/acp_probe.py
 ```
@@ -162,12 +179,15 @@ python scripts/acp_probe.py
 ## 10. 已知差异
 
 - goal 使用桌面的会话文本语义，注入每一轮并写入 `goals.json` 以便重启回读；
-  不启用 `pure-goal` 的预算/暂停状态机；`pure-goal` 插件仍被加载，模型仍可主动
-  调用其工具。
-- `/plan` 与 `mode=plan` 依赖已移除的 `pure-plan-mode` 扩展；选项仍存在但静默降级。
+  不启用 `pure-goal` 的预算/暂停状态机；`pure-goal` 插件仍被加载以提供 `/goal`，
+  但其工具在 `SessionStart` 时移出活动集。
+- `/plan` 与 `mode=plan` 由 `pure-plan-mode` 提供；计划评审是用户决策，完全访问
+  模式下仍会询问。
+- `pure-swarm` 只按模板并发运行一次性子代理；`_pure/swarm/resume` 与跨会话恢复
+  未实现。
 - `codemode` 要求宿主 ToolProgram action 30 / protocol v1；脚本在 QuickJS 中执行，可组合调用本次调用可见的工具。
 - `_pure/themes` 为空，设置页外观项由桌面本地默认值承担。引擎选项覆盖思考等级、
   压缩保留量、provider 重试与 `subagents.maxRunning/maxTurns/timeoutSeconds`；
-  内核没有 swarm 运行时，Swarm 分组不提供选项，页面按缺失分组整组隐藏。
+  集群由模式菜单的 `swarm` 选项驱动，不再依赖缺失的引擎分组。
 - 未实现 `_pure/session/undo`/rewind（桌面 rewind 走 fork）与 `_pure/swarm/resume`
-  （内核子代理是一次性内存子会话，完成后即释放；桌面不展示 swarm 工具卡）。
+  （内核子代理是一次性内存子会话，完成后即释放）。
