@@ -1528,7 +1528,7 @@ pub fn permissions_page(
         },
     ];
     let active = current
-        .or_else(|| Some(snapshot.permissions.mode.as_str()))
+        .or(Some(snapshot.permissions.mode.as_str()))
         .filter(|mode| !mode.is_empty())
         .unwrap_or("default");
     ui.horizontal_wrapped(|ui| {

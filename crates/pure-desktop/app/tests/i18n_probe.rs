@@ -1,7 +1,7 @@
 //! Headless probe for the interface language: with Chinese selected the
 //! settings nav, page headings and rows draw their Chinese text.
 
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::Harness;
 use pure_desktop::i18n::{self, Language};
 use pure_desktop::store::Store;
 use pure_desktop::ui::settings::{Section, SettingsEvent, SettingsView};
@@ -84,7 +84,15 @@ fn the_settings_draw_in_chinese() {
     harness.run();
     harness.run();
     // The nav column draws every page name in Chinese.
-    for label in ["通用", "代理与会话", "模型提供商", "MCP 服务器", "权限", "插件", "关于"] {
+    for label in [
+        "通用",
+        "代理与会话",
+        "模型提供商",
+        "MCP 服务器",
+        "权限",
+        "插件",
+        "关于",
+    ] {
         assert!(
             testutil::count(&harness, label) >= 1,
             "the {label} nav label draws in Chinese"

@@ -15,10 +15,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 const RELEASES_API: &str = "https://api.github.com/repos/QaidVoid/pure/releases?per_page=50";
 
-/// The tag ref the nightly channel reads for the built commit.
-#[cfg(not(target_arch = "wasm32"))]
-const NIGHTLY_REF_API: &str = "https://api.github.com/repos/QaidVoid/pure/git/ref/tags/nightly";
-
 /// The page a download action opens in the user's browser, for the
 /// channel's releases.
 #[must_use]
@@ -31,10 +27,6 @@ pub fn releases_page(channel: crate::prefs::Channel) -> &'static str {
 
 /// Where release artifacts live.
 const RELEASES_DOWNLOAD: &str = "https://github.com/QaidVoid/pure/releases/download";
-
-/// How long a check result stands before the next launch checks again.
-#[cfg(not(target_arch = "wasm32"))]
-const CHECK_INTERVAL: i64 = 24 * 60 * 60;
 
 /// The most bytes a downloaded engine archive may weigh. The archive
 /// has stayed far under this; the cap bounds a broken mirror's reply.
@@ -320,15 +312,6 @@ pub fn apply_outcome(prefs: &mut crate::prefs::Prefs, outcome: CheckOutcome, eng
     prefs.update_badge = pending_update(prefs, engine).is_some();
 }
 
-/// Whether enough time has passed since the last completed check.
-#[cfg(not(target_arch = "wasm32"))]
-fn due_for_check(prefs: &crate::prefs::Prefs, force: bool) -> bool {
-    force
-        || prefs
-            .update_checked_at
-            .is_none_or(|at| at.saturating_add(CHECK_INTERVAL) <= crate::clock::unix_seconds())
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use std::io::Read as _;
@@ -388,14 +371,6 @@ mod native {
     /// Fetches the releases list as text.
     pub(super) fn fetch_releases() -> Result<String, String> {
         fetch_text(super::RELEASES_API, "the release list")
-    }
-
-    /// The commit the `nightly` tag points at, when it exists.
-    pub(super) fn fetch_nightly_commit() -> Result<Option<String>, String> {
-        let text = fetch_text(super::NIGHTLY_REF_API, "the nightly tag")?;
-        let value: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|error| format!("the nightly tag did not read: {error}"))?;
-        Ok(value["object"]["sha"].as_str().map(str::to_owned))
     }
 
     /// Downloads the newest engine release of `channel` and installs

@@ -249,7 +249,7 @@ pub fn slash_items(commands: &[Value], query: &str) -> Vec<SlashItem> {
         .filter(|(name, ..)| name.starts_with(query))
         .map(|(name, hint, description)| SlashItem {
             name: (*name).to_owned(),
-            description: crate::i18n::t(*description).to_owned(),
+            description: crate::i18n::t(description).to_owned(),
             hint: (!hint.is_empty()).then(|| (*hint).to_owned()),
             badge: None,
         });

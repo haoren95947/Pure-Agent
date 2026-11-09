@@ -1422,6 +1422,7 @@ async fn dispatch(
 ///
 /// The whole body is `catch_unwind`-wrapped — a panic across FFI ⇒ abort (same
 /// policy as the tool partial callback, `tool.rs:206`).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn trampoline_runtime_action(
     action_id: u32,
     args_json: StbStringRef,

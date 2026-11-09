@@ -298,9 +298,7 @@ pub fn mode_name(value: &SessionConfigSelectOption) -> String {
 /// The icon one permission mode's row leads with.
 #[must_use]
 pub fn mode_icon(mode: &str) -> crate::icons::Icon {
-    if mode == "full" {
-        crate::icons::Icon::ShieldAlert
-    } else if mode.contains("allow") {
+    if mode == "full" || mode.contains("allow") {
         crate::icons::Icon::ShieldAlert
     } else if mode.contains("deny") || mode.contains("read") {
         crate::icons::Icon::Eye
@@ -317,9 +315,7 @@ pub fn mode_icon(mode: &str) -> crate::icons::Icon {
 /// danger for allow, the accent for deny, plain for ask.
 #[must_use]
 pub fn mode_tone(mode: &str, palette: &Palette) -> Option<egui::Color32> {
-    if mode == "full" {
-        Some(palette.danger)
-    } else if mode.contains("allow") {
+    if mode == "full" || mode.contains("allow") {
         Some(palette.danger)
     } else if mode.contains("deny") || mode.contains("read") {
         Some(palette.accent)

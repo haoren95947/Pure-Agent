@@ -219,12 +219,12 @@ impl SetupView {
                         ui.add_space(4.0);
                         ui.vertical(|ui| {
                             ui.label(
-                                egui::RichText::new(crate::i18n::t(*name))
+                                egui::RichText::new(crate::i18n::t(name))
                                     .size(FS_SM)
                                     .color(palette.ink),
                             );
                             ui.label(
-                                egui::RichText::new(crate::i18n::t(*command))
+                                egui::RichText::new(crate::i18n::t(command))
                                     .size(FS_XS)
                                     .family(crate::theme::family(FAMILY_MONO_REGULAR))
                                     .color(palette.muted),
@@ -239,7 +239,7 @@ impl SetupView {
                                 palette,
                             );
                             if copy.clicked() {
-                                ui.ctx().copy_text(crate::i18n::t(*command).to_owned());
+                                ui.ctx().copy_text(crate::i18n::t(command).to_owned());
                                 self.copied = Some(ix);
                             }
                         });
