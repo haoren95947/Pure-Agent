@@ -1901,10 +1901,9 @@ fn agent_row(
     let line_h = crate::theme::line_h(FS_XS);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 7.0 + name_h + line_h + 7.0),
-        egui::Sense::click(),
+        egui::Sense::hover(),
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &facts.name));
     if response.hovered() {
         ui.painter()
             .rect_filled(rect, egui::CornerRadius::ZERO, palette.hover);
@@ -2016,11 +2015,10 @@ fn agent_row(
         right - nx - badge_w,
     );
     let label_w = label.size().x;
-    ui.painter().galley(
-        egui::pos2(nx, top + (name_h - label.size().y) / 2.0),
-        label,
-        palette.ink,
-    );
+    let label_h = label.size().y;
+    let label_y = top + (name_h - label_h) / 2.0;
+    ui.painter()
+        .galley(egui::pos2(nx, label_y), label, palette.ink);
     if facts.background {
         let galley = ui.painter().layout_no_wrap(
             crate::i18n::t("bg").to_owned(),
@@ -2055,9 +2053,23 @@ fn agent_row(
         line,
         palette.faint,
     );
+    // The row paints its own name; make that text the accessible, clickable
+    // control so an accessibility query can drive the same action as a
+    // pointer click on the card.
+    let name_rect = egui::Rect::from_min_size(
+        egui::pos2(nx, label_y),
+        egui::vec2(label_w.max(1.0), label_h.max(1.0)),
+    );
+    let name_click = ui.interact(
+        name_rect,
+        ui.id().with(("agent-name", &facts.id)),
+        egui::Sense::click(),
+    );
+    name_click
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &facts.name));
     if stopped {
         events.push(WorkbenchEvent::StopAgent(facts.id.clone()));
-    } else if response.clicked() {
+    } else if name_click.clicked() {
         events.push(WorkbenchEvent::OpenAgent(facts.id.clone()));
     }
 }

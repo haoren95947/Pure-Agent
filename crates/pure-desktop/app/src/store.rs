@@ -125,7 +125,8 @@ fn option_named(options: &[PermissionOption], name: &str) -> Option<String> {
     options
         .iter()
         .find(|option| {
-            option.option_id.eq_ignore_ascii_case(name) || option.name.eq_ignore_ascii_case(name)
+            option.option_id.eq_ignore_ascii_case(name)
+                || option.name.to_lowercase().contains(&name.to_lowercase())
         })
         .map(|option| option.option_id.clone())
 }
@@ -1685,10 +1686,16 @@ impl Store {
             },
             None => pure_client::PermissionDecision::Option(option_id),
         };
-        !self
+        let sent = !self
             .client
             .reply_permission(&session_id, review.request_id, &decision)
-            .is_empty()
+            .is_empty();
+        // Approving ends the planning workflow; rejecting leaves it too.
+        // A revise keeps plan mode on so the model can rework the plan.
+        if sent && choice != PlanChoice::Revise {
+            self.exit_plan();
+        }
+        sent
     }
 
     /// Whether swarm cards draw the constellation.
@@ -1909,11 +1916,35 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, Store};
+    use super::{Command, Store, option_named};
     use crate::modes::next_mode_value;
     use crate::transport::State;
-    use pure_client::wire::NoticeTone;
+    use pure_client::wire::{NoticeTone, PermissionOptionKind};
     use pure_client::{Frame, PromptOutcome, RequestId, SteerError, TranscriptItem};
+
+    #[test]
+    fn plan_review_options_match_by_their_label_words() {
+        let options = vec![
+            pure_client::wire::PermissionOption {
+                option_id: "0".into(),
+                name: "Approve plan".into(),
+                kind: PermissionOptionKind::AllowOnce,
+            },
+            pure_client::wire::PermissionOption {
+                option_id: "1".into(),
+                name: "Revise".into(),
+                kind: PermissionOptionKind::RejectOnce,
+            },
+            pure_client::wire::PermissionOption {
+                option_id: "2".into(),
+                name: "Reject and exit".into(),
+                kind: PermissionOptionKind::RejectOnce,
+            },
+        ];
+        assert_eq!(option_named(&options, "approve").as_deref(), Some("0"));
+        assert_eq!(option_named(&options, "revise").as_deref(), Some("1"));
+        assert_eq!(option_named(&options, "reject").as_deref(), Some("2"));
+    }
 
     /// An initialize answer with the given version and capabilities.
     fn init_answer(version: Option<&str>, steer: bool, close: bool) -> Frame {

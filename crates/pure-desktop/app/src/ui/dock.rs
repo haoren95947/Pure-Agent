@@ -485,10 +485,29 @@ fn plan_pill(
 fn swarm_pill(ui: &mut egui::Ui, palette: &crate::theme::Palette, swarm: &SwarmState) {
     let response = pill(ui, palette, "dock-swarm-pill", |ui| {
         crate::icons::icon(ui, crate::icons::Icon::Waypoints, 12.0, palette.done);
-        ui.label(
-            egui::RichText::new(crate::i18n::t("Swarm"))
-                .size(crate::theme::FS_XS)
-                .color(palette.done),
+        let label = crate::i18n::t("Swarm");
+        let (rect, _) = ui.allocate_exact_size(
+            ui.painter()
+                .layout_no_wrap(
+                    label.to_owned(),
+                    egui::FontId::new(
+                        crate::theme::FS_XS,
+                        crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+                    ),
+                    palette.done,
+                )
+                .size(),
+            egui::Sense::hover(),
+        );
+        ui.painter().text(
+            rect.min,
+            egui::Align2::LEFT_TOP,
+            label,
+            egui::FontId::new(
+                crate::theme::FS_XS,
+                crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+            ),
+            palette.done,
         );
         ui.label(
             egui::RichText::new(format!("{}/{}", swarm.done, swarm.total))
@@ -505,6 +524,9 @@ fn swarm_pill(ui: &mut egui::Ui, palette: &crate::theme::Palette, swarm: &SwarmS
         }
     })
     .on_hover_text(crate::i18n::t("delegated members and their states"));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::t("Swarm"))
+    });
     egui::Popup::menu(&response)
         .align(egui::RectAlign::TOP_START)
         .gap(crate::theme::SP_3)
@@ -530,7 +552,7 @@ fn swarm_pill(ui: &mut egui::Ui, palette: &crate::theme::Palette, swarm: &SwarmS
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = crate::theme::SP_4;
-                            let word = egui::RichText::new(crate::i18n::t(*word))
+                            let word = egui::RichText::new(crate::i18n::t(word))
                                 .size(crate::theme::FS_2XS)
                                 .color(color);
                             let word_w = egui::WidgetText::from(word.clone())

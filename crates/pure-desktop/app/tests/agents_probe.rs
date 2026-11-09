@@ -167,7 +167,7 @@ fn a_running_agent_opens_in_the_workbench_and_streams_there() {
     );
 
     use egui_kittest::kittest::Queryable as _;
-    harness.get_by_label("general").click();
+    harness.get_by_label("general").click_accesskit();
     for _ in 0..4 {
         harness.step();
     }
@@ -244,7 +244,7 @@ fn an_open_agent_holds_the_workbench_in_place_and_lets_it_narrow() {
         update(&mut harness, session, update_);
     }
     use egui_kittest::kittest::Queryable as _;
-    harness.get_by_label("general").click();
+    harness.get_by_label("general").click_accesskit();
     for _ in 0..10 {
         harness.step();
     }
@@ -319,7 +319,7 @@ fn the_swarm_pill_lists_its_members_on_a_click() {
         0,
         "the list starts shut"
     );
-    harness.get_by_label("Swarm").click();
+    harness.get_by_label("Swarm").click_accesskit();
     harness.step();
     harness.step();
     assert_eq!(

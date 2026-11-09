@@ -247,6 +247,7 @@ pub(crate) fn one_line(
     format: egui::TextFormat,
     max_width: f32,
 ) -> Arc<egui::Galley> {
+    let text = flat(&text);
     let max = max_width.max(0.0);
     let painter = ui.painter();
     let full = painter.layout_job(egui::text::LayoutJob::single_section(
@@ -283,6 +284,15 @@ pub(crate) fn one_line(
         format!("{kept}\u{2026}"),
         format,
     ))
+}
+
+/// `text` with every whitespace run folded to one space. A one-line
+/// paint must never carry a second row: a newline in the source would
+/// lay out a taller galley whose vertical centering then overlaps the
+/// line above it.
+#[must_use]
+pub(crate) fn flat(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Paints one meta item with its right edge at `right`, centered on
@@ -376,4 +386,19 @@ pub(crate) fn paint_spinner(ui: &egui::Ui, rect: egui::Rect, color: egui::Color3
         .collect();
     ui.painter()
         .add(egui::Shape::line(points, egui::Stroke::new(2.0, color)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flat;
+
+    #[test]
+    fn flat_folds_a_multi_line_detail_into_one_row() {
+        assert_eq!(
+            flat("编写一个简单的 HTML 文件。\n\n任务：在路径 D:\\test\\page2.html 写入"),
+            "编写一个简单的 HTML 文件。 任务：在路径 D:\\test\\page2.html 写入"
+        );
+        assert_eq!(flat("  a \n\t b  "), "a b");
+        assert_eq!(flat(""), "");
+    }
 }

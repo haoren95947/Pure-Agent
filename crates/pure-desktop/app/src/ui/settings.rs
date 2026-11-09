@@ -670,10 +670,21 @@ fn nav(
     picked: &mut Option<Section>,
 ) {
     let rect = ui.max_rect();
-    // Square, as the reference clips the dialog to a plain rectangle:
-    // its fill shows past the rounded border, which paints on top.
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::ZERO, palette.sidebar);
+    // The card paints its own rounded fill under this column, so a
+    // square fill here shows past that corner. The column sits one
+    // border in, so its left corners take the card's radius less that
+    // border: the two arcs then share a centre and the border covers
+    // the seam.
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius {
+            nw: R_DIALOG as u8 - 1,
+            sw: R_DIALOG as u8 - 1,
+            ne: 0,
+            se: 0,
+        },
+        palette.sidebar,
+    );
     ui.painter().vline(
         rect.right() - 0.5,
         rect.y_range(),
