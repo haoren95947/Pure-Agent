@@ -3,7 +3,7 @@
 //!
 //! Beyond streamed text/thinking/tool calls, two richer updates are derived from
 //! the child's events: file mutations (`edit`/`write`) become ACP `diff` content
-//! on the `tool_call`, and a completed `plan_mode_complete` becomes an ACP
+//! on the `tool_call`, and a completed `exit_plan` becomes an ACP
 //! `plan` update (`translate_plan_event`).
 //!
 //! `pure --mode rpc` is the host's supported headless agent loop (see
@@ -92,6 +92,9 @@ pub struct Session {
     kage_goal: tokio::sync::Mutex<String>,
     /// pure's mode option: `default` or `plan`.
     kage_mode: tokio::sync::Mutex<String>,
+    /// pure's swarm option: `on` or `off`. The plugin owns the tool and
+    /// gates it on this value.
+    kage_swarm: tokio::sync::Mutex<String>,
     #[cfg(test)]
     events: Option<pure_extcore::host::TestEvents>,
 }
@@ -142,6 +145,7 @@ impl Session {
             configuration: tokio::sync::OnceCell::new(),
             kage_goal: tokio::sync::Mutex::new(String::new()),
             kage_mode: tokio::sync::Mutex::new("default".to_owned()),
+            kage_swarm: tokio::sync::Mutex::new("off".to_owned()),
             #[cfg(test)]
             events: None,
         }))
@@ -157,30 +161,34 @@ impl Session {
         query: pure_extcore::service::tool_program_queries::ChildPageQuery,
     ) -> pure_extcore::reply::ServiceResult<pure_extcore::service::tool_program_queries::ChildPage>
     {
-        pure_extcore::service::tool_program_queries::child_summaries_for_host(&self.rpc, query).await
+        pure_extcore::service::tool_program_queries::child_summaries_for_host(&self.rpc, query)
+            .await
     }
 
     pub(crate) async fn tool_program_phases(
         &self,
         query: pure_extcore::service::tool_program_queries::ChildPhaseQuery,
-    ) -> pure_extcore::reply::ServiceResult<pure_extcore::service::tool_program_queries::ChildPhasePage>
-    {
+    ) -> pure_extcore::reply::ServiceResult<
+        pure_extcore::service::tool_program_queries::ChildPhasePage,
+    > {
         pure_extcore::service::tool_program_queries::child_phases_for_host(&self.rpc, query).await
     }
 
     pub(crate) async fn tool_program_body(
         &self,
         query: pure_extcore::service::tool_program_queries::ChildBodyQuery,
-    ) -> pure_extcore::reply::ServiceResult<pure_extcore::service::tool_program_queries::ChildBodyPage>
-    {
+    ) -> pure_extcore::reply::ServiceResult<
+        pure_extcore::service::tool_program_queries::ChildBodyPage,
+    > {
         pure_extcore::service::tool_program_queries::child_body_for_host(&self.rpc, query).await
     }
 
     pub(crate) async fn tool_program_snapshot(
         &self,
         query: pure_extcore::service::tool_program_snapshot::ChildSnapshotQuery,
-    ) -> pure_extcore::reply::ServiceResult<pure_extcore::service::tool_program_snapshot::ChildSnapshot>
-    {
+    ) -> pure_extcore::reply::ServiceResult<
+        pure_extcore::service::tool_program_snapshot::ChildSnapshot,
+    > {
         pure_extcore::service::tool_program_snapshot::child_snapshot_for_host(
             self.rpc.clone(),
             query,
@@ -191,8 +199,9 @@ impl Session {
     pub(crate) async fn tool_program_subscription(
         &self,
         query: pure_extcore::service::tool_program_snapshot::ChildSnapshotQuery,
-    ) -> pure_extcore::reply::ServiceResult<pure_extcore::service::tool_program_live::ChildSubscription>
-    {
+    ) -> pure_extcore::reply::ServiceResult<
+        pure_extcore::service::tool_program_live::ChildSubscription,
+    > {
         pure_extcore::service::tool_program_live::child_subscription_for_host(
             self.rpc.clone(),
             query,
@@ -311,7 +320,10 @@ impl Session {
         if !crate::pure_compat::enabled() {
             return;
         }
-        let Some(options) = config.get_mut("configOptions").and_then(Value::as_array_mut) else {
+        let Some(options) = config
+            .get_mut("configOptions")
+            .and_then(Value::as_array_mut)
+        else {
             return;
         };
         let mode = self.kage_mode.lock().await.clone();
@@ -332,6 +344,11 @@ impl Session {
                 "options": []
             }));
         }
+        let swarm = self.kage_swarm.lock().await.clone();
+        match options.iter_mut().find(|option| option["id"] == "swarm") {
+            Some(option) => option["currentValue"] = json!(swarm),
+            None => options.push(crate::pure_compat::swarm_option(&swarm)),
+        }
     }
 
     /// Apply pure's `goal` option. The goal is injected into each turn by
@@ -340,10 +357,10 @@ impl Session {
         *self.kage_goal.lock().await = text.trim().to_owned();
     }
 
-    /// Apply pure's `mode` option. `plan` is the legacy read-only planning
-    /// mode (the bundled `pure-plan-mode` extension has been removed, so the
-    /// command may be unavailable); `full` is the persisted full-access mode;
-    /// any other value is the default, rule-driven mode.
+    /// Apply pure's `mode` option. `plan` is the read-only planning mode,
+    /// `full` is the persisted full-access mode; any other value is the
+    /// default, rule-driven mode. Plan mode is served by `pure-plan-mode`,
+    /// which activates its `exit_plan` tool while the mode is on.
     pub async fn set_pure_mode(&self, mode: &str) -> Result<(), String> {
         let normalized = match mode {
             "plan" => "plan",
@@ -355,13 +372,21 @@ impl Session {
             crate::pure_compat::set_access_mode(normalized == "full");
         }
         let args = if normalized == "plan" { "start" } else { "off" };
-        if let Err(error) = self
-            .rpc
-            .execute_extension_command("plan", json!({"args": args}))
-            .await
-        {
+        if let Err(error) = self.rpc.execute_extension_command_text("plan", args).await {
             crate::diagln!("[pure-backend] plan mode command unavailable: {error}");
         }
+        Ok(())
+    }
+
+    /// Apply pure's `swarm` option. The `pure-swarm` plugin owns the switch:
+    /// it loads its tool while the mode is on and unloads it afterwards.
+    pub async fn set_pure_swarm(&self, value: &str) -> Result<(), String> {
+        let normalized = if value == "on" { "on" } else { "off" };
+        *self.kage_swarm.lock().await = normalized.to_owned();
+        self.rpc
+            .execute_extension_command_text("swarm", normalized)
+            .await
+            .map_err(|error| format!("swarm mode command unavailable: {error}"))?;
         Ok(())
     }
 
@@ -429,8 +454,10 @@ impl Session {
             if plan_mode {
                 prefix.push_str(
                     "Plan mode is on. Do not edit files or implement changes. Inspect the \
-                     workspace and call `plan_mode_complete` with an implementation-ready \
-                     Markdown plan when ready.\n\n",
+                     workspace, then call `exit_plan` once with the whole plan in Markdown: a \
+                     `#` title, the goal, the steps with the files each one touches, and how to \
+                     verify the result. The user approves, revises or rejects it; do not start \
+                     the work until the plan is approved.\n\n",
                 );
             }
             if !goal.is_empty() {
@@ -540,6 +567,18 @@ impl Session {
                                 json!({"sessionId": acp_session_id, "update": plan}),
                             )
                             .await;
+                        // The plugin leaves plan mode whenever the review does
+                        // not ask for a revision, including answers typed into
+                        // the generic approval card. Mirror that here so a
+                        // later turn stops injecting plan guidance.
+                        if value
+                            .pointer("/result/details/active")
+                            .and_then(Value::as_bool)
+                            == Some(false)
+                        {
+                            *self.kage_mode.lock().await = "default".to_owned();
+                            crate::pure_compat::note_state(acp_session_id, None, Some("default"));
+                        }
                     }
                     if let Some(plan) = translate_todo_event(&value) {
                         writer
@@ -820,8 +859,17 @@ fn permission_answer(
         if let Some(option) = options.iter().enumerate().find_map(|(index, option)| {
             (selected == Some(index.to_string().as_str())).then_some(option)
         }) {
+            let mut answer = json!({"values":[option.title]});
+            // A plan review's revise answer carries the user's words on the
+            // pure channel; hand them to the plugin with the chosen label.
+            if let Some(revision) = result
+                .pointer("/_meta/pure/planReview/revision")
+                .and_then(Value::as_str)
+            {
+                answer["text"] = json!(revision);
+            }
             return json!({"type":"ui_dialog_response", "requestId":request_id,
-                "answer":{"values":[option.title]}});
+                "answer":answer});
         }
     }
     json!({"type":"ui_dialog_response", "requestId":request_id, "cancelled":true})
@@ -836,7 +884,11 @@ async fn handle_ui_dialog(
     let request_id = event.get("requestId").and_then(Value::as_str).unwrap_or("");
     let timeout = crate::questions::timeout(&event["ui"]);
     let response = if let Some((params, options)) = permission_request(event, session_id) {
-        if crate::pure_compat::full_access() {
+        // A plan review is the workflow itself, not a tool permission: full
+        // access must not answer it on the user's behalf.
+        let plan_review =
+            event.pointer("/ui/question").and_then(Value::as_str) == Some("exit_plan");
+        if crate::pure_compat::full_access() && !plan_review {
             // Full access: approve the request without asking the client.
             match options
                 .iter()
@@ -1156,13 +1208,17 @@ fn diff_contents(tool: &str, args: &Value) -> Vec<Value> {
 }
 
 /// Translate a completed plan-mode tool result into an ACP `plan` update so the
-/// client's plan/todo panel reflects `plan_mode_complete` (`pure-plan-mode`
-/// returns `details: {kind:"plan", plan, outline}`).
+/// client's plan/todo panel reflects `exit_plan` (`pure-plan-mode` returns
+/// `details: {kind:"plan", plan, outline}`). `plan_mode_complete` from the
+/// upstream package is accepted too.
 pub fn translate_plan_event(event: &Value) -> Option<Value> {
     if event.get("type").and_then(Value::as_str) != Some("tool_execution_end") {
         return None;
     }
-    if event.get("toolName").and_then(Value::as_str) != Some("plan_mode_complete") {
+    if !matches!(
+        event.get("toolName").and_then(Value::as_str),
+        Some("exit_plan" | "plan_mode_complete")
+    ) {
         return None;
     }
     let details = event.pointer("/result/details")?;
@@ -1197,7 +1253,11 @@ pub fn translate_turn_event(event: &Value) -> Option<Value> {
                         .map(|results| results.len() as u64)
                 })
                 .unwrap_or(0);
-            let reason = if calls > 0 { "tool_calls" } else { "no_tool_calls" };
+            let reason = if calls > 0 {
+                "tool_calls"
+            } else {
+                "no_tool_calls"
+            };
             Some(json!({"sessionUpdate": "_pure/turn", "phase": "end", "reason": reason}))
         }
         _ => None,
@@ -1424,6 +1484,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn plan_review_revision_reaches_the_plugin() {
+        let mut event = permission_event("q");
+        event["ui"]["options"] = json!([
+            {"title":"Approve plan","permission":"allow_once"},
+            {"title":"Revise","permission":"reject_once"},
+        ]);
+        let (_, options) = permission_request(&event, "s").unwrap();
+        let answered = permission_answer(
+            "q",
+            &json!({
+                "outcome":{"outcome":"selected","optionId":"1"},
+                "_meta":{"pure":{"planReview":{"revision":"add the tests"}}},
+            }),
+            &options,
+        );
+        assert_eq!(answered["answer"]["values"][0], "Revise");
+        assert_eq!(answered["answer"]["text"], "add the tests");
+    }
+
     fn test_session() -> (Arc<Session>, tokio::io::DuplexStream) {
         let (stdin, commands) = tokio::io::duplex(8192);
         let (rpc, events) = HostSession::test_connection(stdin, 64);
@@ -1435,6 +1515,7 @@ mod tests {
             configuration: tokio::sync::OnceCell::new(),
             kage_goal: tokio::sync::Mutex::default(),
             kage_mode: tokio::sync::Mutex::default(),
+            kage_swarm: tokio::sync::Mutex::default(),
             events: Some(events),
         });
         (session, commands)
@@ -1561,6 +1642,7 @@ mod tests {
             configuration: tokio::sync::OnceCell::new(),
             kage_goal: tokio::sync::Mutex::default(),
             kage_mode: tokio::sync::Mutex::default(),
+            kage_swarm: tokio::sync::Mutex::default(),
             events: None,
         };
         let error = unavailable.durable_state().await.unwrap_err();
@@ -2481,7 +2563,10 @@ mod tests {
     fn resolve_pure_executable_honours_rpi_bin_override() {
         // NOTE: mutates process env; the crate's other tests do not read RPI_BIN.
         std::env::set_var("RPI_BIN", "C:/custom/pure.exe");
-        assert_eq!(resolve_pure_executable(), PathBuf::from("C:/custom/pure.exe"));
+        assert_eq!(
+            resolve_pure_executable(),
+            PathBuf::from("C:/custom/pure.exe")
+        );
         std::env::remove_var("RPI_BIN");
     }
 
@@ -2704,34 +2789,37 @@ mod tests {
         .unwrap();
         assert_eq!(with_calls["phase"], "end");
         assert_eq!(with_calls["reason"], "tool_calls");
-        let no_calls = translate_turn_event(&json!({"type": "turn_end", "toolResultCount": 0})).unwrap();
+        let no_calls =
+            translate_turn_event(&json!({"type": "turn_end", "toolResultCount": 0})).unwrap();
         assert_eq!(no_calls["reason"], "no_tool_calls");
         assert!(translate_turn_event(&json!({"type": "message_end"})).is_none());
     }
 
     #[test]
-    fn plan_mode_complete_emits_plan_update() {
-        let event = json!({
-            "type": "tool_execution_end",
-            "toolCallId": "c",
-            "toolName": "plan_mode_complete",
-            "isError": false,
-            "result": {
-                "content": [],
-                "details": {
-                    "kind": "plan",
-                    "plan": "1. Inspect\n2. Implement",
-                    "outline": "Progress: 1/2 complete\n- ✓ 1. Inspect\n- ○ 2. Implement",
-                    "active": false,
+    fn plan_tools_emit_plan_updates() {
+        for tool in ["exit_plan", "plan_mode_complete"] {
+            let event = json!({
+                "type": "tool_execution_end",
+                "toolCallId": "c",
+                "toolName": tool,
+                "isError": false,
+                "result": {
+                    "content": [],
+                    "details": {
+                        "kind": "plan",
+                        "plan": "1. Inspect\n2. Implement",
+                        "outline": "Progress: 1/2 complete\n- ✓ 1. Inspect\n- ○ 2. Implement",
+                        "active": false,
+                    },
                 },
-            },
-        });
-        let plan = translate_plan_event(&event).unwrap();
-        assert_eq!(plan["sessionUpdate"], "plan");
-        assert_eq!(plan["entries"][0]["content"], "1. Inspect");
-        assert_eq!(plan["entries"][0]["status"], "completed");
-        assert_eq!(plan["entries"][1]["content"], "2. Implement");
-        assert_eq!(plan["entries"][1]["status"], "pending");
+            });
+            let plan = translate_plan_event(&event).unwrap();
+            assert_eq!(plan["sessionUpdate"], "plan");
+            assert_eq!(plan["entries"][0]["content"], "1. Inspect");
+            assert_eq!(plan["entries"][0]["status"], "completed");
+            assert_eq!(plan["entries"][1]["content"], "2. Implement");
+            assert_eq!(plan["entries"][1]["status"], "pending");
+        }
     }
 
     #[test]

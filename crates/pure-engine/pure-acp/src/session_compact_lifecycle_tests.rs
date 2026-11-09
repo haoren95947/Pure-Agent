@@ -14,6 +14,7 @@ async fn compact_reuses_dialog_and_tool_updates_then_settles() {
         configuration: tokio::sync::OnceCell::new(),
         kage_goal: tokio::sync::Mutex::default(),
         kage_mode: tokio::sync::Mutex::default(),
+        kage_swarm: tokio::sync::Mutex::default(),
         events: Some(events),
     });
     let (output, peer) = tokio::io::duplex(8192);
@@ -78,6 +79,7 @@ async fn compact_stream_lag_and_host_closure_are_errors() {
             configuration: tokio::sync::OnceCell::new(),
             kage_goal: tokio::sync::Mutex::default(),
             kage_mode: tokio::sync::Mutex::default(),
+            kage_swarm: tokio::sync::Mutex::default(),
             events: Some(events),
         });
         let task = tokio::spawn({

@@ -1692,6 +1692,24 @@ impl HostSession {
         .await
     }
 
+    /// Run an extension command whose handler reads raw command-line text,
+    /// the same payload a user's `/name args` sends.
+    pub async fn execute_extension_command_text(
+        &self,
+        command: &str,
+        args: &str,
+    ) -> Result<Value, String> {
+        self.command(
+            "execute_command",
+            json!({
+                "command": command,
+                "args": args,
+            }),
+            Duration::from_secs(30),
+        )
+        .await
+    }
+
     pub async fn command(
         &self,
         kind: &str,

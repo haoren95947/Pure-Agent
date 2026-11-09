@@ -144,6 +144,48 @@ pub(crate) fn mode_option(current: &str) -> Value {
     })
 }
 
+/// The `swarm` select option with `current` selected. The value is the
+/// adapter's own switch: the pure-swarm plugin registers the tool and
+/// only loads it while this reads `on`.
+pub(crate) fn swarm_option(current: &str) -> Value {
+    let current = if current == "on" { "on" } else { "off" };
+    json!({
+        "id": "swarm",
+        "name": "Swarm",
+        "type": "select",
+        "currentValue": current,
+        "options": [
+            {"value": "on", "name": "On"},
+            {"value": "off", "name": "Off"},
+        ],
+    })
+}
+
+/// The swarm switch of the session, recorded outside the `Session` because
+/// configuration forwarding rebuilds the option list without a handle.
+pub fn note_swarm(session_id: &str, value: &str) {
+    if let Ok(mut map) = swarms().lock() {
+        if value == "on" {
+            map.insert(session_id.to_owned(), "on".to_owned());
+        } else {
+            map.remove(session_id);
+        }
+    }
+}
+
+fn swarms() -> &'static Mutex<HashMap<String, String>> {
+    static SWARMS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    SWARMS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn swarm_of(session_id: &str) -> String {
+    swarms()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(session_id).cloned())
+        .unwrap_or_else(|| "off".to_owned())
+}
+
 /// Add the full-access value to a `mode` option that predates it, so a
 /// configuration update never drops the choice Settings saved.
 pub(crate) fn ensure_full_mode(option: &mut Value) {
@@ -165,12 +207,19 @@ pub fn augment_options(session_id: &str, config: &mut Value) {
         .ok()
         .and_then(|states| states.get(session_id).cloned())
         .unwrap_or_default();
-    let Some(options) = config.get_mut("configOptions").and_then(Value::as_array_mut) else {
+    let Some(options) = config
+        .get_mut("configOptions")
+        .and_then(Value::as_array_mut)
+    else {
         return;
     };
+    let current_mode = if mode.is_empty() { "default" } else { &mode };
     match options.iter_mut().find(|option| option["id"] == "mode") {
-        Some(option) => ensure_full_mode(option),
-        None => options.push(mode_option(if mode.is_empty() { "default" } else { &mode })),
+        Some(option) => {
+            ensure_full_mode(option);
+            option["currentValue"] = json!(current_mode);
+        }
+        None => options.push(mode_option(current_mode)),
     }
     if !options.iter().any(|option| option["id"] == "goal") {
         options.push(json!({
@@ -180,6 +229,17 @@ pub fn augment_options(session_id: &str, config: &mut Value) {
             "currentValue": goal,
             "options": []
         }));
+    }
+    match options.iter_mut().find(|option| option["id"] == "swarm") {
+        Some(option) => {
+            let current = if swarm_of(session_id) == "on" {
+                "on"
+            } else {
+                "off"
+            };
+            option["currentValue"] = json!(current);
+        }
+        None => options.push(swarm_option(&swarm_of(session_id))),
     }
 }
 
@@ -202,7 +262,10 @@ fn last_session() -> &'static Mutex<Option<String>> {
 }
 
 pub fn session_cwd(session_id: &str) -> Option<PathBuf> {
-    cwds().lock().ok().and_then(|map| map.get(session_id).cloned())
+    cwds()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(session_id).cloned())
 }
 
 /// Skill slash commands for pure's composer. pure's `get_commands` reports
@@ -258,7 +321,10 @@ fn collect_skills(dir: &Path, depth: usize, out: &mut Vec<Value>) {
         if name.is_empty() {
             continue;
         }
-        if !out.iter().any(|entry| entry["name"] == format!("skill:{name}")) {
+        if !out
+            .iter()
+            .any(|entry| entry["name"] == format!("skill:{name}"))
+        {
             out.push(json!({
                 "name": format!("skill:{name}"),
                 "description": if description.is_empty() { "Invoke this skill".to_owned() } else { description },
@@ -354,10 +420,7 @@ pub fn configured_mcp_servers() -> Vec<Value> {
                 entry.insert("command".to_owned(), json!(command));
                 entry.insert(
                     "args".to_owned(),
-                    server
-                        .get("args")
-                        .cloned()
-                        .unwrap_or_else(|| json!([])),
+                    server.get("args").cloned().unwrap_or_else(|| json!([])),
                 );
                 entry.insert("env".to_owned(), pairs(server.get("env")));
             }
@@ -534,7 +597,8 @@ fn efforts_to_thinking_map(efforts: &[Value]) -> Option<Value> {
     Some(Value::Object(map))
 }
 
-fn model_to_pure(model: &Value) -> Value {    let id = model.get("id").and_then(Value::as_str).unwrap_or("");
+fn model_to_pure(model: &Value) -> Value {
+    let id = model.get("id").and_then(Value::as_str).unwrap_or("");
     let name = model
         .get("name")
         .and_then(Value::as_str)
@@ -598,10 +662,7 @@ fn provider_to_pure(id: &str, provider: &Value) -> Value {
         .get("baseUrl")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let name = provider
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or(id);
+    let name = provider.get("name").and_then(Value::as_str).unwrap_or(id);
     let api_key = provider.get("apiKey").and_then(Value::as_str).unwrap_or("");
     let api_key_env = api_key
         .strip_prefix('$')
@@ -644,10 +705,7 @@ fn provider_key_source(id: &str, provider: &Value) -> Value {
             "name": provider.get("name").cloned().unwrap_or_else(|| json!(id)),
         });
     }
-    let declared = provider
-        .get("apiKey")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let declared = provider.get("apiKey").and_then(Value::as_str).unwrap_or("");
     let env_name = declared
         .strip_prefix('$')
         .map(|value| value.trim_matches(|c: char| c == '{' || c == '}'))
@@ -658,7 +716,11 @@ fn provider_key_source(id: &str, provider: &Value) -> Value {
         "deepseek" => "DEEPSEEK_API_KEY",
         _ => "",
     };
-    let env_name = if env_name.is_empty() { conventional } else { env_name };
+    let env_name = if env_name.is_empty() {
+        conventional
+    } else {
+        env_name
+    };
     let present = !env_name.is_empty() && std::env::var_os(env_name).is_some();
     json!({
         "env": env_name,
@@ -748,10 +810,19 @@ pub(crate) fn set_access_mode(full: bool) {
 /// The display names of the bundled plugins, in the same order the Plugins
 /// page lists them.
 fn bundled_plugin_names() -> Vec<String> {
-    ["goal", "todo", "subagents", "codemode", "permission-gate", "rtk"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect()
+    [
+        "goal",
+        "todo",
+        "subagents",
+        "codemode",
+        "permission-gate",
+        "rtk",
+        "plan-mode",
+        "swarm",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }
 
 /// The plugin names the Plugins page shows as turned off.
@@ -797,6 +868,8 @@ fn extension_stem(name: &str) -> Option<String> {
         "codemode" => "pure_codemode".to_owned(),
         "permission-gate" => "pure_permission_gate".to_owned(),
         "rtk" => "pure_rtk".to_owned(),
+        "plan-mode" => "pure_plan_mode".to_owned(),
+        "swarm" => "pure_swarm".to_owned(),
         other if other.starts_with("pure_") => other.to_owned(),
         other => format!("pure_{}", other.replace('-', "_")),
     };
@@ -850,6 +923,14 @@ fn extension_summary(stem: &str) -> (String, Option<&'static str>) {
             "rtk".to_owned(),
             Some("Compress shell output with the bundled rtk binary"),
         ),
+        "pure_plan_mode" => (
+            "plan-mode".to_owned(),
+            Some("Plan first: review a written plan before any edit (/plan)"),
+        ),
+        "pure_swarm" => (
+            "swarm".to_owned(),
+            Some("Run the same task across parallel child agents (/swarm)"),
+        ),
         other => (other.replace('_', "-"), None),
     }
 }
@@ -876,9 +957,7 @@ fn installed_extensions() -> Value {
         .filter_map(|path| {
             let stem = path.file_stem()?.to_string_lossy().into_owned();
             let (name, about) = extension_summary(&stem);
-            let enabled = !disabled
-                .iter()
-                .any(|off| off.eq_ignore_ascii_case(&stem));
+            let enabled = !disabled.iter().any(|off| off.eq_ignore_ascii_case(&stem));
             Some(json!({
                 "name": name,
                 "enabled": enabled,
@@ -1053,14 +1132,8 @@ fn kage_provider_to_rpi(existing: &Value, entry: &Value) -> Result<Value, String
                     for (key, aliases) in [
                         ("input", &["input"][..]),
                         ("output", &["output"][..]),
-                        (
-                            "cacheRead",
-                            &["cacheRead", "cache_read"][..],
-                        ),
-                        (
-                            "cacheWrite",
-                            &["cacheWrite", "cache_write"][..],
-                        ),
+                        ("cacheRead", &["cacheRead", "cache_read"][..]),
+                        ("cacheWrite", &["cacheWrite", "cache_write"][..]),
                     ] {
                         let value = aliases
                             .iter()
@@ -1242,7 +1315,11 @@ async fn config_test(params: &Value) -> Result<Value, String> {
         .get("provider")
         .cloned()
         .ok_or_else(|| "only provider probes are supported".to_string())?;
-    let id = probe.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
+    let id = probe
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
     if id.is_empty() {
         return Err("provider.id is required".to_string());
     }
@@ -1361,10 +1438,9 @@ async fn config_test(params: &Value) -> Result<Value, String> {
         let mut request = client.get(&url);
         if same_origin && !key.is_empty() {
             if kind == "anthropic" {
-                request = request.header("x-api-key", key).header(
-                    "anthropic-version",
-                    "2023-06-01",
-                );
+                request = request
+                    .header("x-api-key", key)
+                    .header("anthropic-version", "2023-06-01");
             } else {
                 request = request.bearer_auth(key);
             }
@@ -1542,7 +1618,12 @@ fn directory_providers(value: &Value) -> Vec<Value> {
             for (id, provider) in map {
                 let mut entry = directory_provider(provider);
                 entry["id"] = json!(id);
-                if entry.get("name").and_then(Value::as_str).unwrap_or("").is_empty() {
+                if entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .is_empty()
+                {
                     entry["name"] = json!(id);
                 }
                 out.push(entry);
@@ -1556,7 +1637,12 @@ fn directory_providers(value: &Value) -> Vec<Value> {
                     }
                     let mut entry = directory_provider(provider);
                     entry["id"] = json!(id);
-                    if entry.get("name").and_then(Value::as_str).unwrap_or("").is_empty() {
+                    if entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .is_empty()
+                    {
                         entry["name"] = json!(id);
                     }
                     out.push(entry);
@@ -1602,15 +1688,19 @@ fn directory_model(model: &Value, id: &str) -> Value {
     if let Some(reasoning) = model.get("reasoning").and_then(Value::as_bool) {
         out["reasoning"] = json!(reasoning);
     }
-    let input = model
-        .get("input")
-        .or_else(|| model.get("modalities").and_then(|modalities| modalities.get("input")));
+    let input = model.get("input").or_else(|| {
+        model
+            .get("modalities")
+            .and_then(|modalities| modalities.get("input"))
+    });
     if let Some(input) = input.and_then(Value::as_array) {
         out["input"] = Value::Array(input.clone());
     }
-    let produces = model
-        .get("produces")
-        .or_else(|| model.get("modalities").and_then(|modalities| modalities.get("output")));
+    let produces = model.get("produces").or_else(|| {
+        model
+            .get("modalities")
+            .and_then(|modalities| modalities.get("output"))
+    });
     if let Some(produces) = produces.and_then(Value::as_array) {
         out["produces"] = Value::Array(produces.clone());
     }
@@ -1640,10 +1730,7 @@ fn directory_model(model: &Value, id: &str) -> Value {
 
 fn directory_provider(provider: &Value) -> Value {
     let id = provider.get("id").and_then(Value::as_str).unwrap_or("");
-    let name = provider
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or(id);
+    let name = provider.get("name").and_then(Value::as_str).unwrap_or(id);
     let api = provider.get("api").and_then(Value::as_str);
     let env = match provider.get("env") {
         Some(Value::Array(values)) => values
@@ -1671,11 +1758,17 @@ fn directory_provider(provider: &Value) -> Value {
     let models_dev_shape = provider
         .get("models")
         .and_then(Value::as_object)
-        .is_some_and(|models| models.values().any(|model| model.get("tool_call").is_some()));
+        .is_some_and(|models| {
+            models
+                .values()
+                .any(|model| model.get("tool_call").is_some())
+        });
     let mut models = match provider.get("models") {
         Some(Value::Array(models)) => models
             .iter()
-            .filter(|model| !models_dev_shape || model.get("tool_call").and_then(Value::as_bool) == Some(true))
+            .filter(|model| {
+                !models_dev_shape || model.get("tool_call").and_then(Value::as_bool) == Some(true)
+            })
             .filter_map(|model| {
                 let id = model.get("id").and_then(Value::as_str)?;
                 Some(directory_model(model, id))
@@ -2061,8 +2154,12 @@ async fn fs_op(_sessions: &Sessions, params: &Value) -> Result<Value, String> {
             let truncated = bytes.len() > cap;
             let slice = &bytes[..bytes.len().min(cap)];
             match std::str::from_utf8(slice) {
-                Ok(text) => Ok(json!({"op": "read", "content": text, "truncated": truncated, "binary": false})),
-                Err(_) => Ok(json!({"op": "read", "content": "", "truncated": truncated, "binary": true})),
+                Ok(text) => Ok(
+                    json!({"op": "read", "content": text, "truncated": truncated, "binary": false}),
+                ),
+                Err(_) => {
+                    Ok(json!({"op": "read", "content": "", "truncated": truncated, "binary": true}))
+                }
             }
         }
         _ => {
@@ -2094,7 +2191,13 @@ fn walk(root: &Path, dir: &Path, entries: &mut Vec<Value>, depth: usize, cap: us
         let Ok(metadata) = entry.metadata() else {
             continue;
         };
-        let kind = if metadata.is_dir() { "directory" } else if metadata.is_file() { "file" } else { "other" };
+        let kind = if metadata.is_dir() {
+            "directory"
+        } else if metadata.is_file() {
+            "file"
+        } else {
+            "other"
+        };
         let relative = path
             .strip_prefix(root)
             .unwrap_or(&path)
@@ -2112,7 +2215,11 @@ fn walk(root: &Path, dir: &Path, entries: &mut Vec<Value>, depth: usize, cap: us
     }
 }
 
-async fn compact(sessions: &Sessions, writer: &Arc<Writer>, params: &Value) -> Result<Value, String> {
+async fn compact(
+    sessions: &Sessions,
+    writer: &Arc<Writer>,
+    params: &Value,
+) -> Result<Value, String> {
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
@@ -2225,7 +2332,11 @@ fn prompt_text(message: &Value) -> Option<&str> {
 
 /// The entry a fork stops at: the message just before the prompt the client
 /// named, or the whole active branch when no prompt was named.
-fn fork_target(messages: &[Value], before: Option<(&str, u64)>, at: Option<&str>) -> Result<Option<String>, String> {
+fn fork_target(
+    messages: &[Value],
+    before: Option<(&str, u64)>,
+    at: Option<&str>,
+) -> Result<Option<String>, String> {
     if let Some(prefix) = at {
         return messages
             .iter()
@@ -2268,13 +2379,17 @@ async fn fork(params: &Value) -> Result<Value, String> {
     let messages = branch_messages(&source)?;
     let before = params.get("before").and_then(|before| {
         let text = before.get("text").and_then(Value::as_str);
-        let occurrence = before.get("occurrence").and_then(Value::as_u64).unwrap_or(0);
+        let occurrence = before
+            .get("occurrence")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         text.map(|text| (text, occurrence))
     });
     let at = params.get("at").and_then(Value::as_str);
     let target = fork_target(&messages, before, at)?;
     let header = {
-        let file = std::fs::File::open(&source).map_err(|error| format!("open session: {error}"))?;
+        let file =
+            std::fs::File::open(&source).map_err(|error| format!("open session: {error}"))?;
         let mut first = String::new();
         std::io::BufReader::new(file)
             .read_line(&mut first)
@@ -2288,12 +2403,11 @@ async fn fork(params: &Value) -> Result<Value, String> {
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
         .unwrap_or(0);
-    let source_metadata: JsonlSessionMetadata =
-        pure_harness::session::jsonl::metadata_from_header(
-            &header,
-            &source.to_string_lossy(),
-            modified_at,
-        );
+    let source_metadata: JsonlSessionMetadata = pure_harness::session::jsonl::metadata_from_header(
+        &header,
+        &source.to_string_lossy(),
+        modified_at,
+    );
     let cwd = source_metadata.cwd.clone();
     let new_id = uuid::Uuid::new_v4().to_string();
     let root = crate::history::session_root()?.join(&new_id);
@@ -2384,7 +2498,9 @@ fn export_markdown(messages: &[Value]) -> String {
                         .join("\n");
                     if !text.is_empty() {
                         let tool = message["toolName"].as_str().unwrap_or("tool");
-                        markdown.push_str(&format!("Tool result ({tool}):\n\n```text\n{text}\n```\n\n"));
+                        markdown.push_str(&format!(
+                            "Tool result ({tool}):\n\n```text\n{text}\n```\n\n"
+                        ));
                     }
                 }
             }
@@ -2406,9 +2522,7 @@ fn export(params: &Value) -> Result<Value, String> {
 /// Find the image (or clip) whose bytes hash to `sha256` in this branch.
 fn media_by_hash(value: &Value, sha256: &str) -> Option<(String, Vec<u8>)> {
     match value {
-        Value::Array(items) => items
-            .iter()
-            .find_map(|item| media_by_hash(item, sha256)),
+        Value::Array(items) => items.iter().find_map(|item| media_by_hash(item, sha256)),
         Value::Object(object) => {
             let data = object.get("data").and_then(Value::as_str);
             let mime = object.get("mimeType").and_then(Value::as_str);
@@ -2485,7 +2599,8 @@ async fn save_image(
     }
     let destination = directory.join(relative);
     if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| format!("create media directory: {error}"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create media directory: {error}"))?;
     }
     std::fs::write(&destination, bytes).map_err(|error| format!("write media: {error}"))?;
     writer
@@ -2517,9 +2632,7 @@ pub async fn dispatch(
         "_pure/config/get" => Ok(config_get()),
         "_pure/config/set" => config_set(params).map_err(|error| (-32602, error)),
         "_pure/auth/set" => auth_set(params).map_err(|error| (-32602, error)),
-        "_pure/config/test" => config_test(params)
-            .await
-            .map_err(|error| (-32603, error)),
+        "_pure/config/test" => config_test(params).await.map_err(|error| (-32603, error)),
         "_pure/providers/directory" => providers_directory(params)
             .await
             .map_err(|error| (-32603, error)),
@@ -2528,7 +2641,9 @@ pub async fn dispatch(
         "_pure/options/set" => options_set(params).map_err(|error| (-32602, error)),
         "_pure/themes" => Ok(json!({"themes": []})),
         "_pure/folders" => folders(params).map_err(|error| (-32602, error)),
-        "_pure/fs" => fs_op(sessions, params).await.map_err(|error| (-32603, error)),
+        "_pure/fs" => fs_op(sessions, params)
+            .await
+            .map_err(|error| (-32603, error)),
         "_pure/session/compact" => compact(sessions, writer, params)
             .await
             .map_err(|error| (-32603, error)),
@@ -2589,6 +2704,37 @@ mod tests {
     }
 
     #[test]
+    fn swarm_switch_is_recorded_per_session() {
+        assert_eq!(swarm_option("on")["currentValue"], "on");
+        assert_eq!(swarm_option("anything-else")["currentValue"], "off");
+        note_swarm("swarm-test-session", "on");
+        assert_eq!(swarm_of("swarm-test-session"), "on");
+        note_swarm("swarm-test-session", "off");
+        assert_eq!(swarm_of("swarm-test-session"), "off");
+    }
+
+    #[test]
+    fn rebuilt_options_follow_the_latest_mode() {
+        let session = "rebuilt-mode-options";
+        let was_enabled = enabled();
+        enable();
+        note_state(session, None, Some("plan"));
+        let mut config = json!({
+            "configOptions": [mode_option("plan")]
+        });
+        augment_options(session, &mut config);
+        assert_eq!(config["configOptions"][0]["currentValue"], "plan");
+
+        note_state(session, None, Some("default"));
+        augment_options(session, &mut config);
+        assert_eq!(config["configOptions"][0]["currentValue"], "default");
+        if !was_enabled {
+            KAGE_COMPAT.store(false, Ordering::SeqCst);
+        }
+        kage_states().lock().unwrap().remove(session);
+    }
+
+    #[test]
     fn kage_provider_mirrors_key_source() {
         let mut env_entry = entry();
         env_entry["api_key_env"] = json!("LOCAL_API_KEY");
@@ -2645,12 +2791,18 @@ mod tests {
         assert_eq!(model["input"], json!(["text", "image"]));
         assert_eq!(model["produces"], json!(["text"]));
         assert_eq!(model["cost"]["cacheRead"], 0.5);
-        assert_eq!(provider_to_pure("local", &json!({
-            "api": "openai-completions",
-            "baseUrl": "http://127.0.0.1:1/v1",
-            "name": "Local",
-            "models": [{"id": "m1", "contextWindow": 64000}]
-        }))["kind"], "openai");
+        assert_eq!(
+            provider_to_pure(
+                "local",
+                &json!({
+                    "api": "openai-completions",
+                    "baseUrl": "http://127.0.0.1:1/v1",
+                    "name": "Local",
+                    "models": [{"id": "m1", "contextWindow": 64000}]
+                })
+            )["kind"],
+            "openai"
+        );
     }
 
     #[test]
@@ -2696,9 +2848,11 @@ mod tests {
 
     #[test]
     fn a_missing_protocol_reads_as_anthropic() {
-        let provider =
-            kage_provider_to_rpi(&json!({}), &json!({"base_url": "https://a.example", "api_key_env": ""}))
-                .unwrap();
+        let provider = kage_provider_to_rpi(
+            &json!({}),
+            &json!({"base_url": "https://a.example", "api_key_env": ""}),
+        )
+        .unwrap();
         assert!(provider.get("api").is_none());
         assert_eq!(provider_to_pure("a", &provider)["kind"], "anthropic");
     }

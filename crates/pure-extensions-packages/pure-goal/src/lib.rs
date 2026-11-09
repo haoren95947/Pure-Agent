@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use rpi_plugin_sdk::handles::ToolHandles;
 use rpi_plugin_sdk::{
@@ -937,6 +938,35 @@ use rpi_plugin_sdk::callbacks::free_string;
 // TurnEnd handler — count turns, enforce budgets, inject the active goal
 // ---------------------------------------------------------------------------
 
+extern "C" fn on_session_start(_: StablePluginEvent, user_data: *mut c_void) -> i32 {
+    let _scope = runtime::enter(runtime::callback(user_data));
+    hide_goal_tool();
+    0
+}
+
+/// Keep `goal` out of the active tool set: the feature is entered through
+/// `/goal` or the composer's goal dialog, never by the model calling a tool.
+/// The plugin still registers the tool so a host that refuses to drop it
+/// keeps working, but the model never sees its schema.
+fn hide_goal_tool() {
+    let Ok(value) = call_runtime(RuntimeActionId::GetActiveTools, json!({})) else {
+        return;
+    };
+    let Some(tools) = value.get("tools").and_then(Value::as_array) else {
+        return;
+    };
+    let mut names: Vec<String> = tools
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let before = names.len();
+    names.retain(|name| name != "goal");
+    if names.len() != before {
+        let _ = call_runtime(RuntimeActionId::SetActiveTools, json!({"tools": names}));
+    }
+}
+
 extern "C" fn on_turn_end(event: StablePluginEvent, user_data: *mut c_void) -> i32 {
     let _scope = runtime::enter(runtime::callback(user_data));
     // TurnEnd carries no payload (empty event) in this ABI; ignore the struct.
@@ -1197,13 +1227,14 @@ rpi_plugin_sdk::export_plugin!(|api| {
     capture_process_role();
     runtime::install(*api);
     if let Some(register_event) = api.register_event_handler {
-        let rc = register_event(
-            EventTag::TurnEnd,
-            on_turn_end as EventHandlerFn,
-            api.user_data,
-        );
-        if rc != 0 {
-            return rc;
+        for (tag, handler) in [
+            (EventTag::TurnEnd, on_turn_end as EventHandlerFn),
+            (EventTag::SessionStart, on_session_start as EventHandlerFn),
+        ] {
+            let rc = register_event(tag, handler, api.user_data);
+            if rc != 0 {
+                return rc;
+            }
         }
     }
     if let Some(register_command) = api.register_command {

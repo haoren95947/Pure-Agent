@@ -101,6 +101,7 @@ async fn compact_shares_prompt_stream_and_holds_lease_through_cancel() {
         configuration: tokio::sync::OnceCell::new(),
         kage_goal: tokio::sync::Mutex::default(),
         kage_mode: tokio::sync::Mutex::default(),
+        kage_swarm: tokio::sync::Mutex::default(),
         events: Some(events),
     });
     assert!(session.compact_available());

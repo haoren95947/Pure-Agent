@@ -869,8 +869,21 @@ impl RuntimeActionHost for HarnessActionHost {
         &self,
         _args: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        let lane = self.harness()?.lane("main");
-        let tools = lane.get_active_tools().await.map_err(|e| e.to_string())?;
+        let harness = self.harness()?;
+        let lane = harness.lane("main");
+        let mut tools = lane.get_active_tools().await.map_err(|e| e.to_string())?;
+        // An empty override list means "every registered tool", the sentinel
+        // the harness keeps for the default state. Report the effective set so
+        // a plugin that hides one tool can write the rest back explicitly.
+        if tools.is_empty() && !harness.has_exact_resources() {
+            tools = harness
+                .get_tools()
+                .await
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|tool| tool.tool.schema().name.clone())
+                .collect();
+        }
         Ok(serde_json::json!({ "tools": tools }))
     }
 

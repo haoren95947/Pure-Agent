@@ -49,6 +49,8 @@ members = [
   # Extensions and example plugins
   "crates/pure-extensions-packages/pure-goal",
   "crates/pure-extensions-packages/pure-todo",
+  "crates/pure-extensions-packages/pure-plan-mode",
+  "crates/pure-extensions-packages/pure-swarm",
   "crates/pure-extensions-packages/pure-subagents",
   "crates/pure-extensions-packages/pure-codemode",
   "crates/pure-extensions-packages/pure-permission-gate",

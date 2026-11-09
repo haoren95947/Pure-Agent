@@ -70,10 +70,7 @@ impl Default for ChildAgents {
             jobs: Mutex::new(HashMap::new()),
             revoked: Mutex::new(HashSet::new()),
             active: Arc::new(AtomicUsize::new(0)),
-            max_jobs: subagents
-                .max_running
-                .unwrap_or(MAX_JOBS)
-                .clamp(1, MAX_JOBS),
+            max_jobs: subagents.max_running.unwrap_or(MAX_JOBS).clamp(1, MAX_JOBS),
             default_turns: u64::from(subagents.max_turns.unwrap_or(8).clamp(1, 32)),
             default_timeout: subagents.timeout_seconds.unwrap_or(300).clamp(10, 1800),
             updates: SubagentMailbox::new(),
@@ -95,6 +92,11 @@ struct Job {
     invocation_signal: Option<CancellationToken>,
     started: Instant,
     updates: SubagentMailbox,
+    /// The parent tool call this child reports under, when its starter named
+    /// one. The desktop groups a call's children by it.
+    tool_call_id: Option<String>,
+    /// The swarm slot (`id`, `item`, `index`, `total`) the starter named.
+    swarm: Option<Value>,
     state: Mutex<State>,
 }
 
@@ -114,13 +116,20 @@ struct State {
 
 impl Job {
     fn announce(&self, role: &str, task: &str) {
-        self.updates.push(json!({
+        let mut update = json!({
             "type": "subagent_update",
             "subagentSessionId": self.id,
             "name": role,
             "task": task,
             "state": "running",
-        }));
+        });
+        if let Some(call) = &self.tool_call_id {
+            update["toolCallId"] = json!(call);
+        }
+        if let Some(swarm) = &self.swarm {
+            update["swarm"] = swarm.clone();
+        }
+        self.updates.push(update);
     }
 
     /// Reports the end state once the run settled or could not be started.
@@ -356,13 +365,7 @@ impl ChildAgents {
             return Err("child task must contain 1-20000 bytes and role 1-200 bytes".into());
         }
         let turns = bounded_number(args, "maxTurns", self.default_turns, 1, 32)? as u32;
-        let timeout = bounded_number(
-            args,
-            "timeoutSeconds",
-            self.default_timeout,
-            10,
-            1800,
-        )?;
+        let timeout = bounded_number(args, "timeoutSeconds", self.default_timeout, 10, 1800)?;
         let tools = args
             .get("tools")
             .map(|value| {
@@ -382,6 +385,11 @@ impl ChildAgents {
             })
             .transpose()?;
         let id = parent.session().id_generator().next();
+        let tool_call_id = args
+            .get("toolCallId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let swarm = args.get("swarm").filter(|value| value.is_object()).cloned();
         let job = Arc::new(Job {
             id: id.clone(),
             owner,
@@ -389,6 +397,8 @@ impl ChildAgents {
             invocation_signal,
             started: Instant::now(),
             updates: self.updates.clone(),
+            tool_call_id,
+            swarm,
             state: Mutex::new(State::default()),
         });
         // Reserve before awaiting construction so concurrent starts cannot exceed the cap.

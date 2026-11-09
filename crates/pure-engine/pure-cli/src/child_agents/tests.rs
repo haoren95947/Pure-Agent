@@ -35,6 +35,8 @@ fn job(owner: u64) -> Arc<Job> {
         started: std::time::Instant::now(),
         updates: SubagentMailbox::new(),
         state: Mutex::new(State::default()),
+        tool_call_id: None,
+        swarm: None,
     })
 }
 fn delta(text: String) -> AgentEvent {

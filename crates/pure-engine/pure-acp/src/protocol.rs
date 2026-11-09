@@ -1320,78 +1320,73 @@ where
                         continue;
                     }
                 };
-                        if let Err(error) = session.configure_file_io(&writer, &session_id).await {
-                            session.kill().await;
-                            writer.session_error(&id, "session/new", &error).await;
-                            continue;
-                        }
-                        let lifecycle = session.configuration_lifecycle();
-                        let runtime = match session.configuration().await {
-                            Ok(runtime) => runtime,
-                            Err(error) => {
-                                session.kill().await;
-                                writer.session_error(&id, "session/new", &error).await;
-                                continue;
-                            }
-                        };
-                        let prepared = runtime.as_ref().map(configuration::Forwarder::prepare);
-                        let mut result = json!({"sessionId": session_id});
-                        match config_options_for(&session, &state).await {
-                            Ok(config) => result["configOptions"] = config["configOptions"].clone(),
-                            Err(error) => diagln!(
-                                "[pure-acp] session {session_id}: config options unavailable: {error}"
-                            ),
-                        }
-                        let watcher = spawn_durable_update_watcher(
-                            session.clone(),
+                if let Err(error) = session.configure_file_io(&writer, &session_id).await {
+                    session.kill().await;
+                    writer.session_error(&id, "session/new", &error).await;
+                    continue;
+                }
+                let lifecycle = session.configuration_lifecycle();
+                let runtime = match session.configuration().await {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        session.kill().await;
+                        writer.session_error(&id, "session/new", &error).await;
+                        continue;
+                    }
+                };
+                let prepared = runtime.as_ref().map(configuration::Forwarder::prepare);
+                let mut result = json!({"sessionId": session_id});
+                match config_options_for(&session, &state).await {
+                    Ok(config) => result["configOptions"] = config["configOptions"].clone(),
+                    Err(error) => diagln!(
+                        "[pure-acp] session {session_id}: config options unavailable: {error}"
+                    ),
+                }
+                let watcher = spawn_durable_update_watcher(
+                    session.clone(),
+                    writer.clone(),
+                    session_id.clone(),
+                );
+                let compact_available = session.compact_available();
+                sessions
+                    .lock()
+                    .await
+                    .insert(session_id.clone(), session.clone());
+                crate::pure_compat::note_session(&session_id, &cwd);
+                crate::pure_compat::note_state(&session_id, None, None);
+                restore_goal(&session, &session_id).await;
+                session.restore_access_mode().await;
+                if let Some(watcher) = watcher {
+                    durable_watchers.insert(session_id.clone(), watcher);
+                }
+                if let Some((_, _, config)) = &prepared {
+                    let mut config = config.clone();
+                    session.augment_pure_config(&mut config).await;
+                    result["configOptions"] = config["configOptions"].clone();
+                }
+                writer
+                    .respond_session(&id, result, &session_id, compact_available)
+                    .await;
+                emit_pure_commands(&writer, &session, &session_id).await;
+                session
+                    .initial_context_usage(&writer, &session_id, &state)
+                    .await;
+                if from_config {
+                    emit_mcp_status(&writer, &session_id, &configured_mcp, mcp_error.as_deref())
+                        .await;
+                }
+                if let Some((rx, gate, _)) = prepared {
+                    configuration_watchers.insert(
+                        session_id.clone(),
+                        configuration::Forwarder::start(
+                            rx,
+                            gate,
                             writer.clone(),
-                            session_id.clone(),
-                        );
-                        let compact_available = session.compact_available();
-                        sessions
-                            .lock()
-                            .await
-                            .insert(session_id.clone(), session.clone());
-                        crate::pure_compat::note_session(&session_id, &cwd);
-                        crate::pure_compat::note_state(&session_id, None, None);
-                        restore_goal(&session, &session_id).await;
-                        session.restore_access_mode().await;
-                        if let Some(watcher) = watcher {
-                            durable_watchers.insert(session_id.clone(), watcher);
-                        }
-                        if let Some((_, _, config)) = &prepared {
-                            let mut config = config.clone();
-                            session.augment_pure_config(&mut config).await;
-                            result["configOptions"] = config["configOptions"].clone();
-                        }
-                        writer
-                            .respond_session(&id, result, &session_id, compact_available)
-                            .await;
-                        emit_pure_commands(&writer, &session, &session_id).await;
-                        session
-                            .initial_context_usage(&writer, &session_id, &state)
-                            .await;
-                        if from_config {
-                            emit_mcp_status(
-                                &writer,
-                                &session_id,
-                                &configured_mcp,
-                                mcp_error.as_deref(),
-                            )
-                            .await;
-                        }
-                        if let Some((rx, gate, _)) = prepared {
-                            configuration_watchers.insert(
-                                session_id.clone(),
-                                configuration::Forwarder::start(
-                                    rx,
-                                    gate,
-                                    writer.clone(),
-                                    session_id,
-                                    lifecycle,
-                                ),
-                            );
-                        }
+                            session_id,
+                            lifecycle,
+                        ),
+                    );
+                }
             }
             (Some(id), method) if tool_program_queries::METHODS.contains(&method) => {
                 query_tasks
@@ -1569,8 +1564,7 @@ where
                 } else {
                     match crate::history::saved_session(session_id) {
                         Ok(path) => {
-                            let servers =
-                                crate::pure_compat::fallback_mcp_servers(servers, &cwd);
+                            let servers = crate::pure_compat::fallback_mcp_servers(servers, &cwd);
                             if report_mcp && servers.is_none() {
                                 mcp_error = Some("invalid MCP configuration".to_owned());
                             }
@@ -1584,8 +1578,7 @@ where
                             {
                                 Ok(opened) => Ok(opened),
                                 Err(error) if report_mcp => {
-                                    tokio::time::sleep(std::time::Duration::from_millis(150))
-                                        .await;
+                                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
                                     match open_session_with_tools(
                                         session_id,
                                         cwd.clone(),
@@ -1768,54 +1761,45 @@ where
                     Some(session) => {
                         // pure's goal/mode options are adapter state, not part of
                         // pure's configuration runtime, so apply them first.
-                        if (config_id == "goal" || config_id == "mode")
+                        if (config_id == "goal" || config_id == "mode" || config_id == "swarm")
                             && crate::pure_compat::enabled()
                         {
                             diagln!("[pure] pure option {config_id}");
                             let applied = match (config_id.as_str(), value.as_str()) {
                                 ("goal", Some(text)) => {
                                     session.set_pure_goal(text).await;
-                                    crate::pure_compat::note_state(
-                                        &session_id,
-                                        Some(text),
-                                        None,
-                                    );
+                                    crate::pure_compat::note_state(&session_id, Some(text), None);
                                     Ok(())
                                 }
                                 ("mode", Some(mode)) => {
                                     let result = session.set_pure_mode(mode).await;
-                                    crate::pure_compat::note_state(
-                                        &session_id,
-                                        None,
-                                        Some(mode),
-                                    );
+                                    crate::pure_compat::note_state(&session_id, None, Some(mode));
+                                    result
+                                }
+                                ("swarm", Some(swarm)) => {
+                                    let result = session.set_pure_swarm(swarm).await;
+                                    crate::pure_compat::note_swarm(&session_id, swarm);
                                     result
                                 }
                                 _ => Err(format!("{config_id} value must be a string")),
                             };
                             match applied {
                                 Ok(()) => match session.state_unlocked().await {
-                                    Ok(state) => {
-                                        match config_options_for(&session, &state).await {
-                                            Ok(config) => writer.respond(&id, config).await,
-                                            Err(error) => {
-                                                writer
-                                                    .session_error(
-                                                        &id,
-                                                        "session/set_config_option",
-                                                        &error,
-                                                    )
-                                                    .await
-                                            }
+                                    Ok(state) => match config_options_for(&session, &state).await {
+                                        Ok(config) => writer.respond(&id, config).await,
+                                        Err(error) => {
+                                            writer
+                                                .session_error(
+                                                    &id,
+                                                    "session/set_config_option",
+                                                    &error,
+                                                )
+                                                .await
                                         }
-                                    }
+                                    },
                                     Err(error) => {
                                         writer
-                                            .session_error(
-                                                &id,
-                                                "session/set_config_option",
-                                                &error,
-                                            )
+                                            .session_error(&id, "session/set_config_option", &error)
                                             .await
                                     }
                                 },
@@ -1889,6 +1873,14 @@ where
                             "mode" => match value.as_str() {
                                 Some(mode) => session.set_pure_mode(mode).await,
                                 None => Err("mode value must be a string".to_string()),
+                            },
+                            "swarm" => match value.as_str() {
+                                Some(swarm) => {
+                                    let result = session.set_pure_swarm(swarm).await;
+                                    crate::pure_compat::note_swarm(&session_id, swarm);
+                                    result
+                                }
+                                None => Err("swarm value must be a string".to_string()),
                             },
                             other => Err(format!("unknown config option: {other}")),
                         };

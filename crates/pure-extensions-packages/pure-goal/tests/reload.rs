@@ -30,6 +30,13 @@ extern "C" fn command(_: StbStringRef, _: StbStringRef, handler: CommandHandlerF
     0
 }
 extern "C" fn event(tag: EventTag, handler: EventHandlerFn, data: *mut c_void) -> i32 {
+    if tag == EventTag::SessionStart {
+        return if REJECT_EVENT.swap(false, Ordering::SeqCst) {
+            7
+        } else {
+            0
+        };
+    }
     assert_eq!(tag, EventTag::TurnEnd);
     if REJECT_EVENT.swap(false, Ordering::SeqCst) {
         return 7;
